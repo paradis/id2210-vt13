@@ -3,6 +3,7 @@ package tman.system.peer.tman;
 import java.util.UUID;
 
 import cyclon.system.peer.cyclon.DescriptorBuffer;
+import java.util.HashSet;
 import se.sics.kompics.address.Address;
 import se.sics.kompics.network.Message;
 import se.sics.kompics.timer.ScheduleTimeout;
@@ -12,60 +13,34 @@ public class ExchangeMsg {
 
     public static class Request extends Message {
 
-        private static final long serialVersionUID = 8493601671018888143L;
-        private final UUID requestId;
-        private final DescriptorBuffer randomBuffer;
+        private final HashSet<Address> buffer;
 
-//-------------------------------------------------------------------
-        public Request(UUID requestId, DescriptorBuffer randomBuffer, Address source, 
-                Address destination) {
+        //-------------------------------------------------------------------
+        Request(Address source, Address destination, HashSet<Address> buf) {
             super(source, destination);
-            this.requestId = requestId;
-            this.randomBuffer = randomBuffer;
-        }
-
-//-------------------------------------------------------------------
-        public UUID getRequestId() {
-            return requestId;
+            this.buffer = buf;
         }
 
         //-------------------------------------------------------------------
-        public DescriptorBuffer getRandomBuffer() {
-            return randomBuffer;
+        public HashSet<Address> getBuffer() {
+            return buffer;
         }
 
-//-------------------------------------------------------------------
-        public int getSize() {
-            return 0;
-        }
     }
 
     public static class Response extends Message {
 
-        private static final long serialVersionUID = -5022051054665787770L;
-        private final UUID requestId;
-        private final DescriptorBuffer selectedBuffer;
+        private final HashSet<Address> buffer;
 
-//-------------------------------------------------------------------
-        public Response(UUID requestId, DescriptorBuffer selectedBuffer, Address source, Address destination) {
+        //-------------------------------------------------------------------
+        public Response(Address source, Address destination, HashSet<Address> buf) {
             super(source, destination);
-            this.requestId = requestId;
-            this.selectedBuffer = selectedBuffer;
+            this.buffer = buf;
         }
 
-//-------------------------------------------------------------------
-        public UUID getRequestId() {
-            return requestId;
-        }
-
-//-------------------------------------------------------------------
-        public DescriptorBuffer getSelectedBuffer() {
-            return selectedBuffer;
-        }
-
-//-------------------------------------------------------------------
-        public int getSize() {
-            return 0;
+        //-------------------------------------------------------------------
+        public HashSet<Address> getBuffer() {
+            return buffer;
         }
     }
 

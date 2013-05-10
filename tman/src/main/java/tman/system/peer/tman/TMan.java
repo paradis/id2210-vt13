@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import cyclon.system.peer.cyclon.CyclonSample;
 import cyclon.system.peer.cyclon.CyclonSamplePort;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import org.slf4j.Logger;
@@ -34,6 +35,7 @@ public final class TMan extends ComponentDefinition {
     private long period;
     private Address self;
     private ArrayList<Address> tmanPartners;
+    private List<Address> cyclonPartners;
     private TManConfiguration tmanConfiguration;
     private Random r;
 
@@ -85,25 +87,74 @@ public final class TMan extends ComponentDefinition {
     Handler<CyclonSample> handleCyclonSample = new Handler<CyclonSample>() {
         @Override
         public void handle(CyclonSample event) {
-            List<Address> cyclonPartners = event.getSample();
+            cyclonPartners = event.getSample();
 
-            // merge cyclonPartners into TManPartners
+            // Another list of peerss
+            Address dest = selectPeer();
+            if (dest != null)
+            {
+                HashSet<Address> buf = new HashSet<Address>(tmanPartners);
+                buf.add(self);
+                buf.addAll(cyclonPartners);
+
+                logger.debug("Tman (request) " + self + " -> " + dest + ": " + buf.size() + " peers");
+                trigger(new ExchangeMsg.Request(self, dest, buf), networkPort);
+            }
+            else
+                logger.error("Tman (request) " + self + " Unable to find a peer");
+            
         }
     };
+    
+    Address selectPeer() {
+        if (tmanPartners.size() > 0)
+            return getSoftMaxAddress(tmanPartners);
+        // First run
+        else if (cyclonPartners.size() > 0)
+            return getSoftMaxAddress(cyclonPartners);
+        else
+            return null;
+    }
+    
 //-------------------------------------------------------------------	
     Handler<ExchangeMsg.Request> handleTManPartnersRequest = new Handler<ExchangeMsg.Request>() {
         @Override
         public void handle(ExchangeMsg.Request event) {
+            // Our list of peers
+            HashSet<Address> buf = new HashSet<Address>(tmanPartners);
+            buf.add(self);
+            buf.addAll(cyclonPartners); //received in the last handleCyclonSample()
+            
+            logger.debug("Tman (answer)" + self + " -> " + event.getSource() + ": " + buf.size() + " peers");
+            trigger(new ExchangeMsg.Response(self, event.getSource(), buf), networkPort);
+            
+            // Merge
+            buf.addAll(event.getBuffer());
+            tmanPartners = selectView(buf);
 
+               
         }
     };
     
     Handler<ExchangeMsg.Response> handleTManPartnersResponse = new Handler<ExchangeMsg.Response>() {
         @Override
         public void handle(ExchangeMsg.Response event) {
-
+            HashSet<Address> buf = new HashSet<Address>(tmanPartners);
+            buf.addAll(event.getBuffer());
+            tmanPartners = selectView(buf);
         }
     };
+    
+    private ArrayList<Address> selectView(HashSet<Address> buffer) {
+        List<Address> tempView = new ArrayList<Address>(buffer);
+        // Take the age into account to remove obsolete peers
+        Collections.sort(tempView, new ComparatorById(self));
+        
+        if (tempView.size() < tmanConfiguration.getSampleSize())
+            return (ArrayList<Address>) tempView;
+        
+        return (ArrayList<Address>) tempView.subList(0, tmanConfiguration.getSampleSize());
+    }
 
         // TODO - if you call this method with a list of entries, it will
     // return a single node, weighted towards the 'best' node (as defined by
@@ -139,6 +190,6 @@ public final class TMan extends ComponentDefinition {
             }
         }
         return entries.get(entries.size() - 1);
-    }    
-    
+    }
+        
 }

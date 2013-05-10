@@ -2,6 +2,7 @@ package search.simulator.core;
 
 import common.configuration.SearchConfiguration;
 import common.configuration.CyclonConfiguration;
+import common.configuration.TManConfiguration;
 import common.simulation.SimulatorInit;
 import common.simulation.SimulatorPort;
 import java.io.IOException;
@@ -51,11 +52,11 @@ public final class SearchExecutionMain extends ComponentDefinition {
         final BootstrapConfiguration bootConfiguration = BootstrapConfiguration.load(System.getProperty("bootstrap.configuration"));
         final CyclonConfiguration cyclonConfiguration = CyclonConfiguration.load(System.getProperty("cyclon.configuration"));
         final SearchConfiguration searchConfiguration = SearchConfiguration.load(System.getProperty("search.configuration"));
+        final TManConfiguration tmanConfiguration = TManConfiguration.load(System.getProperty("tman.configuration"));
 
         trigger(new BootstrapServerInit(bootConfiguration), bootstrapServer.getControl());
         trigger(new P2pOrchestratorInit(scenario, new KingLatencyMap()), p2pSimulator.getControl());
-        trigger(new SimulatorInit(bootConfiguration, cyclonConfiguration, null,
-                searchConfiguration), simulator.getControl());
+        trigger(new SimulatorInit(bootConfiguration, cyclonConfiguration, tmanConfiguration, searchConfiguration), simulator.getControl());
 
         // connect
         connect(bootstrapServer.getNegative(Network.class), p2pSimulator.getPositive(Network.class), new MessageDestinationFilter(bootConfiguration.getBootstrapServerAddress()));
