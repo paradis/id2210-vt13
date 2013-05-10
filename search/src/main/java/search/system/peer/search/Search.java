@@ -79,7 +79,7 @@ public final class Search extends ComponentDefinition {
     StandardAnalyzer analyzer = new StandardAnalyzer(Version.LUCENE_42);
     Directory index = new RAMDirectory();
     IndexWriterConfig config = new IndexWriterConfig(Version.LUCENE_42, analyzer);
-    int lastMissingIndexEntry = 0;
+    int lastMissingIndexEntry = 1;
     int maxIndexEntry = 0;
     Random random;
     // When you partition the index you need to find new nodes
@@ -144,6 +144,7 @@ public final class Search extends ComponentDefinition {
             String[] args = event.getTarget().split("-");
 
             logger.debug("Handling Webpage Request");
+            logger.debug(event.getRequest().toString());
             WebResponse response;
             if (args[0].compareToIgnoreCase("search") == 0) {
                 response = new WebResponse(searchPageHtml(args[1]), event, 1, 1);
@@ -204,15 +205,21 @@ public final class Search extends ComponentDefinition {
     }
 
     private void addEntry(String title, int id) throws IOException {
-        IndexWriter w = new IndexWriter(index, config);
-        Document doc = new Document();
-        doc.add(new TextField("title", title, Field.Store.YES));
-        // Use a NumericRangeQuery to find missing index entries:
-//    http://lucene.apache.org/core/4_2_0/core/org/apache/lucene/search/NumericRangeQuery.html
-        // http://lucene.apache.org/core/4_2_0/core/org/apache/lucene/document/IntField.html
-        doc.add(new IntField("id", id, Field.Store.YES));
-        w.addDocument(doc);
-        w.close();
+        if (!isAlreadyKnown(id)) {
+            updateIndexPointers(id);
+            IndexWriter w = new IndexWriter(index, config);
+            Document doc = new Document();
+            doc.add(new TextField("title", title, Field.Store.YES));
+            // Use a NumericRangeQuery to find missing index entries:
+            // http://lucene.apache.org/core/4_2_0/core/org/apache/lucene/search/NumericRangeQuery.html
+            // http://lucene.apache.org/core/4_2_0/core/org/apache/lucene/document/IntField.html
+            doc.add(new IntField("id", id, Field.Store.YES));
+            w.addDocument(doc);
+            w.close();
+        }
+        else {
+            logger.info("Already known value rejected (id: "+id+")");
+        }
     }
 
     private String query(StringBuilder sb, String querystr) throws ParseException, IOException {
@@ -283,44 +290,39 @@ public final class Search extends ComponentDefinition {
         return topDocs.scoreDocs;
     }
     
+    boolean isAlreadyKnown(int id) throws IOException {
+        IndexReader reader = DirectoryReader.open(index);
+        IndexSearcher searcher = new IndexSearcher(reader);
+
+        ScoreDoc[] hits = getExistingDocsInRange(id, id, reader, searcher);
+        return hits != null && hits.length > 0;
+    }
+        
     List<Range> getMissingRanges() {
         List<Range> res = new ArrayList<Range>();
         IndexReader reader = null;
     	IndexSearcher searcher = null;
         try {
-        	reader = DirectoryReader.open(index);
-        	searcher = new IndexSearcher(reader);
-            ScoreDoc[] hits = getExistingDocsInRange(lastMissingIndexEntry, maxIndexEntry,
-                    reader, searcher);
+            reader = DirectoryReader.open(index);
+            searcher = new IndexSearcher(reader);
+            ScoreDoc[] hits = getExistingDocsInRange(lastMissingIndexEntry, maxIndexEntry, reader, searcher);
             if (hits != null) {
                 int startRange = lastMissingIndexEntry;
-                // This should terminate by finding the last entry at position maxIndexValue
-                for (int id = lastMissingIndexEntry + 1; id <= maxIndexEntry; id++) {
-                    // We can skip the for-loop if the hits are returned in order, with lowest id first
-                    boolean found = false;
-                    for (int i = 0; i < hits.length; ++i) {
-                        int docId = hits[i].doc;
-                        Document d;
-                        try {
-                            d = searcher.doc(docId);
-                            int indexId = Integer.parseInt(d.get("id"));
-                            if (id == indexId) {
-                                found = true;
-                            }
-                        } catch (IOException ex) {
-                            java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
-                        }
+                for (int i = 0; i < hits.length; i++) {
+                    int indexId = idOfScoreDoc(hits[i], searcher);
+                    
+                    if (indexId == startRange) {
+                        startRange++;
+                        updateIndexPointers(indexId);
                     }
-                    if (found) {
-                        if (id != startRange) {
-                            res.add(new Range(startRange, id - 1));
-                        }
-                        startRange = (id == Integer.MAX_VALUE) ? Integer.MAX_VALUE : id + 1;
+                    else {
+                        res.add (new Range(startRange, indexId-1));
+                        startRange = indexId+1;
                     }
                 }
+                
                 // Add all entries > maxIndexEntry as a range of interest.
                 res.add(new Range(maxIndexEntry+1, Integer.MAX_VALUE));
-                
             }
         } catch (IOException ex) {
             java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
@@ -344,10 +346,9 @@ public final class Search extends ComponentDefinition {
         IndexSearcher searcher = null;
         IndexReader reader = null;
         try {
-        	reader = DirectoryReader.open(index);
-        	searcher = new IndexSearcher(reader);
-            ScoreDoc[] hits = getExistingDocsInRange(range.getLower(),
-                    range.getUpper(), reader, searcher);
+            reader = DirectoryReader.open(index);
+            searcher = new IndexSearcher(reader);
+            ScoreDoc[] hits = getExistingDocsInRange(range.getLower(), range.getUpper(), reader, searcher);
             if (hits != null) {
                 for (int i = 0; i < hits.length; ++i) {
                     int docId = hits[i].doc;
@@ -355,7 +356,7 @@ public final class Search extends ComponentDefinition {
                     try {
                         d = searcher.doc(docId);
                         int indexId = Integer.parseInt(d.get("id"));
-                        String text = d.get("text");
+                        String text = d.get("title");
                         res.add(new IndexEntry(indexId, text));
                     } catch (IOException ex) {
                         java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
@@ -433,13 +434,25 @@ public final class Search extends ComponentDefinition {
                 res.addAll(getMissingIndexEntries(r));
             }
             
-            // TODO send missing index entries back to requester
+            trigger(new MissingIndexEntries.Response(self, event.getSource(), res), networkPort);
         }
     };
     Handler<MissingIndexEntries.Response> handleMissingIndexEntriesResponse = new Handler<MissingIndexEntries.Response>() {
         @Override
         public void handle(MissingIndexEntries.Response event) {
-            // TODO merge the missing index entries in your lucene index 
+            if(event.getEntries().size() > 0) {
+                logger.debug(self.getId() + " : Merging "+event.getEntries().size() + " data from "+event.getSource().toString());
+            }
+            
+            for(IndexEntry e : event.getEntries()) {
+                // TODO : plus joli que ça
+                try {
+                    logger.debug ("Merging entry " + e.getIndexId());
+                    addEntry(e.getText(), e.getIndexId());
+                } catch (IOException ex) {
+                    java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
+                }
+            }
         }
     };
 
@@ -469,7 +482,8 @@ public final class Search extends ComponentDefinition {
             }
         }
     };
-//-------------------------------------------------------------------	
+    
+    //-------------------------------------------------------------------	
     Handler<AddIndexText> handleAddIndexText = new Handler<AddIndexText>() {
         @Override
         public void handle(AddIndexText event) {
@@ -494,11 +508,17 @@ public final class Search extends ComponentDefinition {
     };
     
     private void updateIndexPointers(int id) {
-        if (id == lastMissingIndexEntry + 1) {
+        if (id == lastMissingIndexEntry) {
             lastMissingIndexEntry++;
         }
         if (id > maxIndexEntry) {
             maxIndexEntry = id;
         }
+    }
+    
+    private int idOfScoreDoc(ScoreDoc hit, IndexSearcher searcher) throws IOException {
+        int docId = hit.doc;
+        Document d = searcher.doc(docId);
+        return Integer.parseInt(d.get("id"));
     }
 }
