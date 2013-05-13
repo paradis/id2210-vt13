@@ -78,6 +78,7 @@ public final class SearchSimulator extends ComponentDefinition {
     }
 //-------------------------------------------------------------------	
     Handler<SimulatorInit> handleInit = new Handler<SimulatorInit>() {
+        @Override
         public void handle(SimulatorInit init) {
             peers.clear();
 
@@ -135,14 +136,13 @@ public final class SearchSimulator extends ComponentDefinition {
         public void handle(AddIndexEntry event) {
             Long successor = ringNodes.getNode(event.getId());
             Component peer = peers.get(successor);
-            
             trigger(new AddIndexText(randomText()), peer.getNegative(IndexPort.class));
         }
     };
 //-------------------------------------------------------------------	
     Handler<PeerJoin> handlePeerJoin = new Handler<PeerJoin>() {
+        @Override
         public void handle(PeerJoin event) {
-            int num = event.getNum();
             Long id = event.getPeerId();
 
             // join with the next id if this id is taken
@@ -153,12 +153,13 @@ public final class SearchSimulator extends ComponentDefinition {
                 successor = ringNodes.getNode(id);
             }
 
-            createAndStartNewPeer(id, num);
+            createAndStartNewPeer(id);
             ringNodes.addNode(id);
         }
     };
 //-------------------------------------------------------------------	
     Handler<PeerFail> handlePeerFail = new Handler<PeerFail>() {
+        @Override
         public void handle(PeerFail event) {
             Long id = ringNodes.getNode(event.getId());
 
@@ -173,13 +174,14 @@ public final class SearchSimulator extends ComponentDefinition {
     };
 //-------------------------------------------------------------------	
     Handler<GenerateReport> handleGenerateReport = new Handler<GenerateReport>() {
+        @Override
         public void handle(GenerateReport event) {
             Snapshot.report();
         }
     };
 
 //-------------------------------------------------------------------	
-    private final void createAndStartNewPeer(long id, int num) {
+    private void createAndStartNewPeer(long id) {
         Component peer = create(SearchPeer.class);
         InetAddress ip = ipGenerator.generateIP();
         Address address = new Address(ip, 8058, (int) id);
@@ -189,16 +191,16 @@ public final class SearchSimulator extends ComponentDefinition {
 //        connect(webIncoming, peer.getPositive(Web.class));
         subscribe(handleWebResponse, peer.getPositive(Web.class));
         
-        trigger(new SearchPeerInit(address, num, bootstrapConfiguration, cyclonConfiguration, tmanConfiguration, searchConfiguration), peer.getControl());
+        trigger(new SearchPeerInit(address, bootstrapConfiguration, cyclonConfiguration, tmanConfiguration, searchConfiguration), peer.getControl());
 
         trigger(new Start(), peer.getControl());
         peers.put(id, peer);
         peersAddress.put(id, address);
-
+        Snapshot.addPeer(address);
     }
 
 //-------------------------------------------------------------------	
-    private final void stopAndDestroyPeer(Long id) {
+    private void stopAndDestroyPeer(Long id) {
         Component peer = peers.get(id);
 
         trigger(new Stop(), peer.getControl());
@@ -220,6 +222,7 @@ public final class SearchSimulator extends ComponentDefinition {
             super(Message.class, address, true);
         }
 
+        @Override
         public Address getValue(Message event) {
             return event.getDestination();
         }
