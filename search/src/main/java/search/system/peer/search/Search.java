@@ -1,5 +1,6 @@
 package search.system.peer.search;
 
+import search.system.peer.leader.LeaderMsg;
 import common.configuration.SearchConfiguration;
 import cyclon.system.peer.cyclon.CyclonSample;
 import cyclon.system.peer.cyclon.CyclonSamplePort;
@@ -53,6 +54,8 @@ import se.sics.kompics.web.WebResponse;
 import search.simulator.snapshot.Snapshot;
 import search.system.peer.AddIndexText;
 import search.system.peer.IndexPort;
+import search.system.peer.leader.LeaderElectionPort;
+import search.system.peer.leader.LeaderMsg.Apply;
 import tman.system.peer.tman.TManSample;
 import tman.system.peer.tman.TManSamplePort;
 
@@ -70,6 +73,8 @@ public final class Search extends ComponentDefinition {
     Negative<Web> webPort = negative(Web.class);
     Positive<CyclonSamplePort> cyclonSamplePort = positive(CyclonSamplePort.class);
     Positive<TManSamplePort> tmanPort = positive(TManSamplePort.class);
+    Positive<LeaderElectionPort> leaderElectionPort = positive(LeaderElectionPort.class);
+    
     ArrayList<Address> neighbours = new ArrayList<Address>();
     private Address self;
     private SearchConfiguration searchConfiguration;
@@ -80,6 +85,7 @@ public final class Search extends ComponentDefinition {
     int lastMissingIndexEntry = 1;
     int maxIndexEntry = 0;
     Random random;
+    
     // When you partition the index you need to find new nodes
     // This is a routing table maintaining a list of pairs in each partition.
     private Map<Integer, List<PeerDescriptor>> routingTable;
@@ -497,6 +503,8 @@ public final class Search extends ComponentDefinition {
     Handler<TManSample> handleTManSample = new Handler<TManSample>() {
         @Override
         public void handle(TManSample event) {
+            // TODO : bypass this component
+            trigger(event, leaderElectionPort);
         }
     };
 

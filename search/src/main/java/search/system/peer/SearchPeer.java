@@ -28,6 +28,8 @@ import common.configuration.TManConfiguration;
 import common.peer.PeerAddress;
 import cyclon.system.peer.cyclon.*;
 import se.sics.kompics.web.Web;
+import search.system.peer.leader.LeaderElectionPort;
+import search.system.peer.leader.LeaderElector;
 import tman.system.peer.tman.TMan;
 import tman.system.peer.tman.TManInit;
 import tman.system.peer.tman.TManSamplePort;
@@ -41,7 +43,7 @@ public final class SearchPeer extends ComponentDefinition {
 	Positive<Timer> timer = positive(Timer.class);
         Negative<Web> webPort = negative(Web.class);
 	
-        private Component cyclon, tman, search, bootstrap;
+        private Component cyclon, tman, leaderElector, search, bootstrap;
 	private Address self;
 	private int bootstrapRequestPeerCount;
 	private boolean bootstrapped;
@@ -51,6 +53,7 @@ public final class SearchPeer extends ComponentDefinition {
 	public SearchPeer() {
 		cyclon = create(Cyclon.class);
 		tman = create(TMan.class);
+                leaderElector = create(LeaderElector.class);
 		search = create(Search.class);
 		bootstrap = create(BootstrapClient.class);
 
@@ -70,6 +73,10 @@ public final class SearchPeer extends ComponentDefinition {
 		connect(tman.getPositive(TManSamplePort.class), 
                         search.getNegative(TManSamplePort.class));
 
+                connect(leaderElector.getPositive(LeaderElectionPort.class), search.getNegative(LeaderElectionPort.class));
+                connect(network, leaderElector.getNegative(Network.class));
+                connect(timer, leaderElector.getNegative(Timer.class));
+                        
                 connect(indexPort, search.getNegative(IndexPort.class));
 		
 		subscribe(handleInit, control);
@@ -123,6 +130,7 @@ public final class SearchPeer extends ComponentDefinition {
 			trigger(new BootstrapCompleted("Cyclon", new PeerAddress(self)), 
                                 bootstrap.getPositive(P2pBootstrap.class));
 			trigger(new SearchInit(self, aggregationConfiguration), search.getControl());
+                        trigger(new SearchInit(self, aggregationConfiguration), leaderElector.getControl());
 		}
 	};
 
