@@ -13,14 +13,16 @@ public final class TManConfiguration {
     private final long seed;
     private final double temperature;
     private final int sampleSize;
+    private final int maxAge;
 
 //-------------------------------------------------------------------
-    public TManConfiguration(long seed, long period, double temperature, int sampleSize) {
+    public TManConfiguration(long seed, long period, double temperature, int sampleSize, int maxAge) {
         super();
         this.seed = seed;
         this.period = period;
         this.temperature = temperature;
         this.sampleSize = sampleSize;
+        this.maxAge = maxAge;
     }
 
     public long getSeed() {
@@ -41,6 +43,11 @@ public final class TManConfiguration {
     public int getSampleSize() {
         return sampleSize;
     }
+        
+    //-------------------------------------------------------------------
+    public int getMaxAge() {
+        return maxAge;
+    }
     
 //-------------------------------------------------------------------
     public void store(String file) throws IOException {
@@ -49,6 +56,7 @@ public final class TManConfiguration {
         p.setProperty("period", "" + period);
         p.setProperty("temperature", "" + temperature);
         p.setProperty("sampleSize", "" + sampleSize);
+        p.setProperty("maxAge", "" + maxAge);
 
         Writer writer = new FileWriter(file);
         p.store(writer, "se.sics.kompics.p2p.overlay.application");
@@ -64,7 +72,8 @@ public final class TManConfiguration {
         long period = Long.parseLong(p.getProperty("period"));
         double temp = Double.parseDouble(p.getProperty("temperature"));
         int size = Integer.parseInt(p.getProperty("sampleSize"));
+        int maxAge = Integer.parseInt(p.getProperty("maxAge"));
 
-        return new TManConfiguration(seed, period, temp, size);
+        return new TManConfiguration(seed, period, temp, size, maxAge);
     }
 }

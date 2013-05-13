@@ -1,9 +1,7 @@
 package tman.system.peer.tman;
 
-import java.util.UUID;
-
-import cyclon.system.peer.cyclon.DescriptorBuffer;
-import java.util.HashSet;
+import cyclon.system.peer.cyclon.PeerDescriptor;
+import java.util.List;
 import se.sics.kompics.address.Address;
 import se.sics.kompics.network.Message;
 import se.sics.kompics.timer.ScheduleTimeout;
@@ -13,16 +11,16 @@ public class ExchangeMsg {
 
     public static class Request extends Message {
 
-        private final HashSet<Address> buffer;
+        private final List<PeerDescriptor> buffer;
 
         //-------------------------------------------------------------------
-        Request(Address source, Address destination, HashSet<Address> buf) {
+        Request(Address source, Address destination, List<PeerDescriptor> buf) {
             super(source, destination);
             this.buffer = buf;
         }
 
         //-------------------------------------------------------------------
-        public HashSet<Address> getBuffer() {
+        public List<PeerDescriptor> getBuffer() {
             return buffer;
         }
 
@@ -30,16 +28,16 @@ public class ExchangeMsg {
 
     public static class Response extends Message {
 
-        private final HashSet<Address> buffer;
+        private final List<PeerDescriptor> buffer;
 
         //-------------------------------------------------------------------
-        public Response(Address source, Address destination, HashSet<Address> buf) {
+        public Response(Address source, Address destination, List<PeerDescriptor> buf) {
             super(source, destination);
             this.buffer = buf;
         }
 
         //-------------------------------------------------------------------
-        public HashSet<Address> getBuffer() {
+        public List<PeerDescriptor> getBuffer() {
             return buffer;
         }
     }
