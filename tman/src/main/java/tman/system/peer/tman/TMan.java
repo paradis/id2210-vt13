@@ -34,7 +34,7 @@ public final class TMan extends ComponentDefinition {
     Positive<Timer> timerPort = positive(Timer.class);
     private long period;
     private Address self;
-    private ArrayList<Address> tmanPartners;
+    private List<Address> tmanPartners;
     private List<Address> cyclonPartners;
     private TManConfiguration tmanConfiguration;
     private Random r;
@@ -123,7 +123,8 @@ public final class TMan extends ComponentDefinition {
             // Our list of peers
             HashSet<Address> buf = new HashSet<Address>(tmanPartners);
             buf.add(self);
-            buf.addAll(cyclonPartners); //received in the last handleCyclonSample()
+            if (cyclonPartners != null)
+                buf.addAll(cyclonPartners); //received in the last handleCyclonSample()
             
             logger.debug("Tman (answer)" + self + " -> " + event.getSource() + ": " + buf.size() + " peers");
             trigger(new ExchangeMsg.Response(self, event.getSource(), buf), networkPort);
@@ -145,7 +146,7 @@ public final class TMan extends ComponentDefinition {
         }
     };
     
-    private ArrayList<Address> selectView(HashSet<Address> buffer) {
+    private List<Address> selectView(HashSet<Address> buffer) {
         List<Address> tempView = new ArrayList<Address>(buffer);
         // Take the age into account to remove obsolete peers
         Collections.sort(tempView, new ComparatorById(self));
@@ -153,7 +154,7 @@ public final class TMan extends ComponentDefinition {
         if (tempView.size() < tmanConfiguration.getSampleSize())
             return (ArrayList<Address>) tempView;
         
-        return (ArrayList<Address>) tempView.subList(0, tmanConfiguration.getSampleSize());
+        return tempView.subList(0, tmanConfiguration.getSampleSize());
     }
 
         // TODO - if you call this method with a list of entries, it will

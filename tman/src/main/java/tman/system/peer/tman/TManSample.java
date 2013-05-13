@@ -1,6 +1,7 @@
 package tman.system.peer.tman;
 
 import java.util.ArrayList;
+import java.util.List;
 
 
 import se.sics.kompics.Event;
@@ -8,10 +9,10 @@ import se.sics.kompics.address.Address;
 
 
 public class TManSample extends Event {
-	ArrayList<Address> partners = new ArrayList<Address>();
+	List<Address> partners = new ArrayList<Address>();
 
 //-------------------------------------------------------------------
-	public TManSample(ArrayList<Address> partners) {
+	public TManSample(List<Address> partners) {
 		this.partners = partners;
 	}
         
@@ -19,7 +20,7 @@ public class TManSample extends Event {
 	}
 
 //-------------------------------------------------------------------
-	public ArrayList<Address> getSample() {
+	public List<Address> getSample() {
 		return this.partners;
 	}
 }

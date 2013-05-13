@@ -1,12 +1,13 @@
 package tman.simulator.snapshot;
 
 import java.util.ArrayList;
+import java.util.List;
 import se.sics.kompics.address.Address;
 
 
 public class PeerInfo {
-	private ArrayList<Address> tmanPartners;
-	private ArrayList<Address> cyclonPartners;
+	private List<Address> tmanPartners;
+	private List<Address> cyclonPartners;
 
 //-------------------------------------------------------------------
 	public PeerInfo() {
@@ -15,22 +16,22 @@ public class PeerInfo {
 	}
 
 //-------------------------------------------------------------------
-	public void updateTManPartners(ArrayList<Address> partners) {
+	public void updateTManPartners(List<Address> partners) {
 		this.tmanPartners = partners;
 	}
 
 //-------------------------------------------------------------------
-	public void updateCyclonPartners(ArrayList<Address> partners) {
+	public void updateCyclonPartners(List<Address> partners) {
 		this.cyclonPartners = partners;
 	}
 
 //-------------------------------------------------------------------
-	public ArrayList<Address> getTManPartners() {
+	public List<Address> getTManPartners() {
 		return this.tmanPartners;
 	}
 
 //-------------------------------------------------------------------
-	public ArrayList<Address> getCyclonPartners() {
+	public List<Address> getCyclonPartners() {
 		return this.cyclonPartners;
 	}
 }

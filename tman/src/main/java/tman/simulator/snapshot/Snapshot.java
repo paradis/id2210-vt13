@@ -1,6 +1,7 @@
 package tman.simulator.snapshot;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.TreeMap;
 import se.sics.kompics.address.Address;
 
@@ -26,7 +27,7 @@ public class Snapshot {
 	}
 
 //-------------------------------------------------------------------
-	public static void updateTManPartners(Address address, ArrayList<Address> partners) {
+	public static void updateTManPartners(Address address, List<Address> partners) {
 		PeerInfo peerInfo = peers.get(address);
 		
 		if (peerInfo == null)
