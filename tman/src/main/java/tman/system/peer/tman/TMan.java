@@ -81,6 +81,7 @@ public final class TMan extends ComponentDefinition {
         @Override
         public void handle(TManSchedule event) {
             Snapshot.updateTManPartners(self, getTmanAddress());
+            logger.debug("TManSchedule: " + self.getId() + " tmanPeers=" + printAdresses(tmanPartners));
 
             // Publish sample to connected components
             trigger(new TManSample(getTmanAddress()), tmanPort);            
@@ -101,10 +102,9 @@ public final class TMan extends ComponentDefinition {
         public void handle(CyclonSample event) {
             cyclonPartners = event.getSample();
 
-            // Another list of peerss
             Address dest = selectPeer();
             if (dest == null)
-                logger.error("Tman (request) " + self + " Unable to find a peer");
+                logger.error("Request: " + self.getId() + " Unable to find a peer");
             else
             {
                 List<PeerDescriptor> buf = new ArrayList<PeerDescriptor>(tmanPartners);
@@ -114,7 +114,7 @@ public final class TMan extends ComponentDefinition {
                 for (Address a : cyclonPartners)
                     merge(buf, new PeerDescriptor(a)); 
 
-                logger.debug("Tman (request) " + self + " -> " + dest + ": " + buf.size() + " peers");
+                logger.debug("Request: " + self.getId() + " -> " + dest.getId() + ": " + buf.size() + " peers " + printAdresses(buf));
                 trigger(new ExchangeMsg.Request(self, dest, buf), networkPort);
             }                
             
@@ -148,11 +148,11 @@ public final class TMan extends ComponentDefinition {
                 for (Address a : cyclonPartners)
                     merge(buf, new PeerDescriptor(a)); 
             
-            logger.debug("Tman (answer)" + self + " -> " + event.getSource() + ": " + buf.size() + " peers");
+            logger.debug("Response: " + self.getId() + " -> " + event.getSource().getId() + ": " + buf.size() + " peers " + printAdresses(buf));
             trigger(new ExchangeMsg.Response(self, event.getSource(), buf), networkPort);
             
             // Merge
-            buf.addAll(event.getBuffer());
+            merge(buf, event.getBuffer());
             tmanPartners = selectView(buf);               
         }
     };
@@ -168,18 +168,14 @@ public final class TMan extends ComponentDefinition {
     };
     
     private List<PeerDescriptor> merge(List<PeerDescriptor> list, PeerDescriptor descriptor) {
-        Iterator<PeerDescriptor> i = list.iterator();
+        ListIterator<PeerDescriptor> i = list.listIterator();
         while (i.hasNext()) {
             PeerDescriptor d = i.next();
-            //TODO à verifier que c'est pas seulement les refs
             if (d.getAddress() == descriptor.getAddress())
             {
                 if (d.getAge() > descriptor.getAge())
-                {
-                    // TODO: moche
-                    i.remove(); 
-                    list.add(descriptor);
-                }
+                    i.set(descriptor);
+
                 return list;
             }
         }
@@ -201,14 +197,16 @@ public final class TMan extends ComponentDefinition {
         while (i.hasNext()) {
             PeerDescriptor d = i.next();
             if (d.incrementAndGetAge() > tmanConfiguration.getMaxAge())
-            {
-                logger.info(self + " Remove old entry: " + d);
                 i.remove();
-            }
         }
         
         Collections.sort(list, new ComparatorPeerById(self));
         
+        // We remove ourself from the list if needed
+        //since we have just sorted the list, we will be in the first position
+        if (list.get(0).getAddress() == self)
+            list.remove(0);
+
         if (list.size() < tmanConfiguration.getSampleSize())
             return list;
         
@@ -250,5 +248,12 @@ public final class TMan extends ComponentDefinition {
         }
         return entries.get(entries.size() - 1);
     }
-        
+
+    String printAdresses(List<PeerDescriptor> list)
+    {
+        String str = "[";
+        for (PeerDescriptor d : list)
+            str += "{" + d.getAddress().getId() + ", " + d.getAge() + "} ";
+        return str + "]";
+    }
 }
