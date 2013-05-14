@@ -14,7 +14,10 @@ import se.sics.kompics.network.Network;
 import se.sics.kompics.timer.ScheduleTimeout;
 import se.sics.kompics.timer.Timer;
 import search.system.peer.leader.LeaderMsg.Accept;
+import search.system.peer.leader.LeaderMsg.AskCurrentLeader;
 import search.system.peer.leader.LeaderMsg.Reject;
+import search.system.peer.leader.LeaderMsg.SendBestPeer;
+import search.system.peer.leader.LeaderMsg.SendCurrentLeader;
 import search.system.peer.search.SearchInit;
 import tman.system.peer.tman.TManSample;
 
@@ -29,6 +32,7 @@ public class LeaderElector extends ComponentDefinition{
 
     List<Address> tmanNeighbours = null;
     Address currentLeader = null;
+    Address bestPeer = null;    // Known peer with highest utility
     Address self;
     
     List<Address> expectedElectors = null;  // List of electors whose answer is awaited ; must be null if no ongoing election
@@ -53,38 +57,92 @@ public class LeaderElector extends ComponentDefinition{
     Handler<LeaderRequest> handleLeaderRequest = new Handler<LeaderRequest>() {
         @Override
         public void handle(LeaderRequest e) {
-            trigger (new LeaderResponse(currentLeader), leaderElectionPort);
+            if (currentLeader != null) {
+                trigger (new LeaderResponse(currentLeader), leaderElectionPort);
+            }
+            else {
+                if (bestPeer != null)
+                    trigger (new LeaderMsg.AskCurrentLeader(self, bestPeer), networkPort);
+                else
+                    trigger (new LeaderResponse(null), leaderElectionPort);
+                /*// No known leader. Find highest id among neighbours
+                Address bestNeighbour = getBestPeerFrom(tmanNeighbours, null);
+                
+                // If I am the largest node, start election
+                if (bestNeighbour.getId() <= self.getId()) {
+                    launchElection();
+                }
+                else {
+                    trigger (new LeaderMsg.AskCurrentLeader(self, bestNeighbour), networkPort);
+                    // TODO : trigger timeout
+                }*/
+            }
         }
+    };
+    
+    Handler<LeaderMsg.AskCurrentLeader> handleAskCurrentLeader = new Handler<LeaderMsg.AskCurrentLeader>() {
+        @Override
+        public void handle(AskCurrentLeader e) {
+            if (currentLeader != null) {
+                trigger(new LeaderMsg.SendCurrentLeader(self, e.getSource(), currentLeader), networkPort);
+            }
+            else {
+                trigger(new LeaderMsg.SendBestPeer(self, e.getSource(), bestPeer), networkPort);
+            }
+        }
+    };
+    
+    Handler<LeaderMsg.SendCurrentLeader> handleSendCurrentLeader = new Handler<LeaderMsg.SendCurrentLeader>() {
+        @Override
+        public void handle(SendCurrentLeader e) {
+            // TODO : checks ?
+            currentLeader = e.getCurrentLeader();
+            trigger (new LeaderResponse(currentLeader), leaderElectionPort);
+            // TODO : stop timeout
+        }
+    };
+    
+    Handler<LeaderMsg.SendBestPeer> handleSendBestPeer = new Handler<LeaderMsg.SendBestPeer>() {
+        @Override
+        public void handle(SendBestPeer e) {
+            // TODO : checks ?
+            if (bestPeer != null && bestPeer.getId() < e.getBestPeer().getId()) {
+                bestPeer = e.getBestPeer();
+                trigger (new LeaderMsg.AskCurrentLeader(self, bestPeer), networkPort);
+            }
+            // TODO : stop timeout
+        }
+
     };
     
     Handler<TManSample> handleTManSample = new Handler<TManSample>() {
         @Override
         public void handle(TManSample event) {
             tmanNeighbours = event.getSample();
+            bestPeer = getBestPeerFrom(tmanNeighbours, bestPeer);
             
-            int myId = self.getId();
-            boolean noLargerId = true;
-            for (Address a : tmanNeighbours) {
-                if (a.getId() > myId) {
-                    noLargerId = false;
-                }
-            }
+            Address bestNeighbour = getBestPeerFrom(tmanNeighbours, null);
+            boolean noLargerId = bestNeighbour.getId() <= self.getId();
             
             // If noLargerId is true and no leader is known and no election is going on, launch an election
             if (noLargerId && currentLeader == null && expectedElectors == null) {
-                // Ask all tman neighbours if I can be the leader
-                for (Address dest : tmanNeighbours) {
-                    trigger (new LeaderMsg.Apply(self, dest), networkPort);
-                }
-                
-                expectedElectors = tmanNeighbours;
-                // TODO : adapt timeout
-                ScheduleTimeout rst = new ScheduleTimeout(10000);
-                rst.setTimeoutEvent(new ElectionTimeout(rst));
-                trigger(rst, timerPort);
+               launchElection();
             }
         }
     };
+    
+    public void launchElection() {
+        // Ask all tman neighbours if I can be the leader
+        for (Address dest : tmanNeighbours) {
+            trigger (new LeaderMsg.Apply(self, dest), networkPort);
+        }
+
+        expectedElectors = tmanNeighbours;
+        // TODO : adapt timeout
+        ScheduleTimeout rst = new ScheduleTimeout(10000);
+        rst.setTimeoutEvent(new ElectionTimeout(rst));
+        trigger(rst, timerPort);
+    }
 
     Handler<LeaderMsg.Apply> handleLeaderApply = new Handler<LeaderMsg.Apply>() {
         @Override
@@ -98,12 +156,7 @@ public class LeaderElector extends ComponentDefinition{
                 trigger(new LeaderMsg.Accept(self, e.getSource()), networkPort);
             }
             else {
-                Address bestVote = e.getSource();
-                for (Address neighbour : tmanNeighbours) {
-                    if (neighbour.getId() > bestVote.getId()) {
-                        bestVote = neighbour;
-                    }
-                }
+                Address bestVote = getBestPeerFrom(tmanNeighbours, e.getSource());
                 
                 if (bestVote == e.getSource()) {
                     trigger(new LeaderMsg.Accept(self, e.getSource()), networkPort);
@@ -150,4 +203,24 @@ public class LeaderElector extends ComponentDefinition{
             }
         }
     };
+    
+    Address getBestPeerFrom(List<Address> peers, Address other) {
+        Address best = peers.get(0);
+        for (Address a : peers) {
+            if (a.getId() > best.getId()) {
+                best = a;
+            }
+        }
+        
+        if (other == null) {
+            return best;
+        }
+        
+        if (other.getId() > best.getId()) {
+            return other;
+        }
+        else {
+            return best;
+        }
+    }
 }

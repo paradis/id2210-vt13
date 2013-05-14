@@ -36,4 +36,36 @@ public class LeaderMsg {
             return _betterPeer;
         }
     }
+    
+    public static class AskCurrentLeader extends Message {
+        AskCurrentLeader(Address source, Address destination) {
+            super(source, destination);
+        }
+    }
+    
+    public static class SendCurrentLeader extends Message {
+        private Address _currentLeader;
+
+        public Address getCurrentLeader() {
+            return _currentLeader;
+        }
+        
+        SendCurrentLeader(Address source, Address destination, Address currentLeader) {
+            super(source, destination);
+            _currentLeader = currentLeader;
+        }
+    }
+    
+    public static class SendBestPeer extends Message {
+        private Address _bestPeer;
+
+        public Address getBestPeer() {
+            return _bestPeer;
+        }
+        
+        SendBestPeer(Address source, Address destination, Address bestPeer) {
+            super(source, destination);
+            _bestPeer = bestPeer;
+        }
+    }
 }
