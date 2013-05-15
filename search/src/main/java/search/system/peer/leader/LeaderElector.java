@@ -5,12 +5,14 @@
 package search.system.peer.leader;
 
 import java.util.List;
+import java.util.UUID;
 import se.sics.kompics.ComponentDefinition;
 import se.sics.kompics.Handler;
 import se.sics.kompics.Negative;
 import se.sics.kompics.Positive;
 import se.sics.kompics.address.Address;
 import se.sics.kompics.network.Network;
+import se.sics.kompics.timer.CancelTimeout;
 import se.sics.kompics.timer.ScheduleTimeout;
 import se.sics.kompics.timer.Timer;
 import search.system.peer.leader.LeaderMsg.Accept;
@@ -34,6 +36,7 @@ public class LeaderElector extends ComponentDefinition{
     Address currentLeader = null;
     Address bestPeer = null;    // Known peer with highest utility
     Address self;
+    UUID currentRequestTimeoutID = null;
     
     List<Address> expectedElectors = null;  // List of electors whose answer is awaited ; must be null if no ongoing election
     
@@ -61,10 +64,21 @@ public class LeaderElector extends ComponentDefinition{
                 trigger (new LeaderResponse(currentLeader), leaderElectionPort);
             }
             else {
-                if (bestPeer != null)
+                // If I am already looking for the leader, it's useless to look twice.
+                if (currentRequestTimeoutID != null) {
+                    return;
+                }
+            
+                if (bestPeer != null) {
                     trigger (new LeaderMsg.AskCurrentLeader(self, bestPeer), networkPort);
-                else
+                    
+                    LeaderRequestTimeout timeout = new LeaderRequestTimeout(new ScheduleTimeout(2000));
+                    trigger(timeout, timerPort);
+                    currentRequestTimeoutID = timeout.getTimeoutId();
+                }
+                else {
                     trigger (new LeaderResponse(null), leaderElectionPort);
+                }
                 /*// No known leader. Find highest id among neighbours
                 Address bestNeighbour = getBestPeerFrom(tmanNeighbours, null);
                 
@@ -98,7 +112,8 @@ public class LeaderElector extends ComponentDefinition{
             // TODO : checks ?
             currentLeader = e.getCurrentLeader();
             trigger (new LeaderResponse(currentLeader), leaderElectionPort);
-            // TODO : stop timeout
+            trigger (new CancelTimeout(currentRequestTimeoutID), timerPort);
+            currentRequestTimeoutID = null;
         }
     };
     
@@ -106,13 +121,30 @@ public class LeaderElector extends ComponentDefinition{
         @Override
         public void handle(SendBestPeer e) {
             // TODO : checks ?
+            trigger (new CancelTimeout(currentRequestTimeoutID), timerPort);
+            
             if (bestPeer != null && bestPeer.getId() < e.getBestPeer().getId()) {
                 bestPeer = e.getBestPeer();
                 trigger (new LeaderMsg.AskCurrentLeader(self, bestPeer), networkPort);
+                
+                LeaderRequestTimeout timeout = new LeaderRequestTimeout(new ScheduleTimeout(2000));
+                trigger(timeout, timerPort);
+                currentRequestTimeoutID = timeout.getTimeoutId();
             }
-            // TODO : stop timeout
         }
-
+    };
+    
+    Handler<LeaderRequestTimeout> handleLeaderRequestTimeout = new Handler<LeaderRequestTimeout>() {
+        @Override
+        public void handle(LeaderRequestTimeout e) {
+            if (e.getTimeoutId() == currentRequestTimeoutID) {
+                // Request timeout : abandon operation
+                currentRequestTimeoutID = null;
+                trigger(new LeaderResponse(null), leaderElectionPort);
+                // Best peer didn't answer : assume he's gone.
+                bestPeer = null;
+            }
+        }
     };
     
     Handler<TManSample> handleTManSample = new Handler<TManSample>() {
