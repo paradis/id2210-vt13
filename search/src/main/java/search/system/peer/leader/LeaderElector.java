@@ -7,7 +7,6 @@ package search.system.peer.leader;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -29,32 +28,29 @@ import search.system.peer.search.SearchInit;
 import tman.system.peer.tman.TManSample;
 
 /*
- * idées: merger les messages bestpeer / leader
- * on veut un leader vivant, donc quand on recoit un message du leader
- * 3 requetes en parallèle:
- *  dès réception d'une, si on a pas le leader et que la demande (auto ou master) est valide, on merge les best peers et on contacte le meilleur qui n'a pas été contacté.
- *
- *
- * accélérer convergence: leader election toutes les 100sec, avec démarrage aléatoire.
- *
- */
-/**
- *
- * @author alban
+ * TODO: accélérer convergence: leader election toutes les 100sec, avec démarrage aléatoire?
  */
 public class LeaderElector extends ComponentDefinition{
     private static final Logger logger = LoggerFactory.getLogger(LeaderElector.class);
+
+    //TODO
+    private static final int config_timeout_election = 10000;
+    private static final int config_timeout_info = 2000;
+    private static final int config_max_requests = 3;
+    private static final int  config_size_bestPeers = 10;
 
     Negative<LeaderElectionPort> leaderElectionPort = negative(LeaderElectionPort.class);
     Positive<Network> networkPort = positive(Network.class);
     Positive<Timer> timerPort = positive(Timer.class);
 
+    Address self;
     List<Address> tmanNeighbours = null;
+    TreeSet<Address> bestPeers;    // Known peers with highest utility
+    Map<Address, UUID> currentRequests;
+
     Address currentLeader = null;
     Address oldLeader = null;
-    TreeSet<Address> bestPeers;    // Known peer with highest utility
-    Address self;
-    Map<Address, UUID> currentRequests;
+    boolean peerRequest = false;
 
     List<Address> expectedElectors = null;  // List of electors whose answer is awaited ; must be null if no ongoing election
 
@@ -84,13 +80,22 @@ public class LeaderElector extends ComponentDefinition{
         }
     };
 
-    // The peer ask for the leader
+    /*
+     * The peer ask for the leader
+     */
     Handler<LeaderRequest> handleLeaderRequest = new Handler<LeaderRequest>() {
         @Override
         public void handle(LeaderRequest e) {
-            //here we check if the leader is up
+            peerRequest = true;
+
+            //already done
             if (currentLeader == self)
+            {
+                peerRequest = false;
                 trigger(new LeaderResponse(self), leaderElectionPort);
+                logger.debug(self.getId()+" : LeaderRequest: We are the leader");
+            }
+            //here we check if the leader is up
             else if (currentLeader != null)
                 launchRequest(currentLeader);
             else
@@ -107,6 +112,7 @@ public class LeaderElector extends ComponentDefinition{
         public void handle(AskLeaderInfos e) {
             if (e.getSuspectedLeader() != null && e.getSuspectedLeader() == currentLeader)
             {
+                logger.debug(self.getId()+" : Leader (" + currentLeader.getId() + ") suspected by " + e.getSource().getId());
                 launchRequest(currentLeader);
                 trigger(new LeaderMsg.AnswerLeaderInfos(self, e.getSource(), null, bestPeers), networkPort);
             }
@@ -132,8 +138,13 @@ public class LeaderElector extends ComponentDefinition{
                 // We receive a message from the leader, it is up
                 if (e.getCurrentLeader() == e.getSource())
                 {
-                    trigger (new LeaderResponse(currentLeader), leaderElectionPort);
                     currentLeader = e.getCurrentLeader();
+                    if (peerRequest)
+                    {
+                        peerRequest = false;
+                        trigger (new LeaderResponse(currentLeader), leaderElectionPort);
+                        logger.debug(self.getId()+" : Found Leader: " + currentLeader.getId());
+                    }
                 }
                 else
                 {
@@ -162,6 +173,7 @@ public class LeaderElector extends ComponentDefinition{
 
                 if (currentLeader == address)
                 {
+                    logger.debug(self.getId()+" : No answers from leader: " + currentLeader.getId());
                     oldLeader = currentLeader;
                     currentLeader = null;
                 }
@@ -182,7 +194,7 @@ public class LeaderElector extends ComponentDefinition{
      */
     void launchRequests()
     {
-        while(currentLeader == null && currentRequests.size() < 4)
+        while(currentLeader == null && currentRequests.size() <= config_max_requests)
         {
             Address peer = selectNextPeer();
 
@@ -192,7 +204,10 @@ public class LeaderElector extends ComponentDefinition{
             {
                 // we have no possibility to find a leader
                 if (currentRequests.isEmpty())
+                {
+                    peerRequest = false;
                     trigger(new LeaderResponse(null), leaderElectionPort);
+                }
 
                 return;
             }
@@ -201,9 +216,9 @@ public class LeaderElector extends ComponentDefinition{
 
     /*
      * Select a peer which may be contacted
-     * TODO: à vérifier, en particulier itération
      */
     Address selectNextPeer() {
+        // TODO: à vérifier, en particulier itération
         for (Address peer : bestPeers) {
             if (!currentRequests.containsKey(peer))
                 return peer;
@@ -222,7 +237,7 @@ public class LeaderElector extends ComponentDefinition{
 
         trigger(new LeaderMsg.AskLeaderInfos(self, peer, oldLeader), networkPort);
 
-        LeaderInfosTimeout timeout = new LeaderInfosTimeout(new ScheduleTimeout(2000));
+        LeaderInfosTimeout timeout = new LeaderInfosTimeout(new ScheduleTimeout(config_timeout_info));
         trigger(timeout, timerPort);
         currentRequests.put(peer, timeout.getTimeoutId());
     }
@@ -265,8 +280,7 @@ public class LeaderElector extends ComponentDefinition{
         }
 
         expectedElectors = tmanNeighbours;
-        // TODO : adapt timeout
-        ScheduleTimeout rst = new ScheduleTimeout(10000);
+        ScheduleTimeout rst = new ScheduleTimeout(config_timeout_election);
         rst.setTimeoutEvent(new ElectionTimeout(rst));
         trigger(rst, timerPort);
     }
@@ -277,6 +291,8 @@ public class LeaderElector extends ComponentDefinition{
             // The source of this message is applying for leadership
 
             if (currentLeader != null && currentLeader.getId() > e.getSource().getId()) {
+                // check if leader is still up
+                launchRequest(currentLeader);
                 trigger(new LeaderMsg.Reject(self, e.getSource(), currentLeader), networkPort);
             }
             else if (tmanNeighbours == null) {
@@ -318,7 +334,7 @@ public class LeaderElector extends ComponentDefinition{
             logger.debug(self.getId()+" : election : received rejection message from "+e.getSource().getId());
             expectedElectors = null;
 
-            // TODO : Contact preferred peer
+            launchRequest(e.getBetterPeer());
         }
     };
 
@@ -373,7 +389,7 @@ public class LeaderElector extends ComponentDefinition{
     {
         bestPeers.remove(self);
 
-        while(bestPeers.size() > 10)
+        while(bestPeers.size() >= config_size_bestPeers)
             bestPeers.pollLast();
     }
 
