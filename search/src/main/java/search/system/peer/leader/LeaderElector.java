@@ -6,6 +6,8 @@ package search.system.peer.leader;
 
 import java.util.List;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import se.sics.kompics.ComponentDefinition;
 import se.sics.kompics.Handler;
 import se.sics.kompics.Negative;
@@ -28,6 +30,8 @@ import tman.system.peer.tman.TManSample;
  * @author alban
  */
 public class LeaderElector extends ComponentDefinition{
+    private static final Logger logger = LoggerFactory.getLogger(LeaderElector.class);
+    
     Negative<LeaderElectionPort> leaderElectionPort = negative(LeaderElectionPort.class);
     Positive<Network> networkPort = positive(Network.class);
     Positive<Timer> timerPort = positive(Timer.class);
@@ -150,15 +154,31 @@ public class LeaderElector extends ComponentDefinition{
     Handler<TManSample> handleTManSample = new Handler<TManSample>() {
         @Override
         public void handle(TManSample event) {
+            if (event.getSample().isEmpty()) {
+                return;
+            }
+            
             tmanNeighbours = event.getSample();
             bestPeer = getBestPeerFrom(tmanNeighbours, bestPeer);
             
             Address bestNeighbour = getBestPeerFrom(tmanNeighbours, null);
             boolean noLargerId = bestNeighbour.getId() <= self.getId();
             
+            if (!noLargerId && currentLeader == self) {
+                // Do not consider myself the leader any more
+                // TODO : check whether new best is actually a leader, so as not to have a temporary leaderless network ?
+                currentLeader = null;
+                logger.debug(self.getId()+" : "+bestNeighbour.getId()+" discovered as better node, so I abdicate.");
+            }
+            
+            if(noLargerId) {
+                logger.debug(self.getId()+" : no larger id found among "+printAdresses(tmanNeighbours));
+            }
+            
             // If noLargerId is true and no leader is known and no election is going on, launch an election
             if (noLargerId && currentLeader == null && expectedElectors == null) {
-               launchElection();
+                logger.debug(self.getId()+" : launch election.");
+                launchElection();
             }
         }
     };
@@ -205,10 +225,12 @@ public class LeaderElector extends ComponentDefinition{
         public void handle(Accept e) {
             // This elector has accepted the election, so don't expect anything from him any more.
             if (expectedElectors != null) {
+                logger.debug(self.getId()+" : election : received acceptance message from "+e.getSource().getId());
                 expectedElectors.remove(e.getSource());
                 if (expectedElectors.isEmpty()) {
                     currentLeader = self;
                     expectedElectors = null;
+                    logger.debug(self.getId()+" : election : I got elected !");
                 }
             }
         }
@@ -218,6 +240,7 @@ public class LeaderElector extends ComponentDefinition{
         @Override
         public void handle(Reject e) {
             // Someone rejected the election ! Abort.
+            logger.debug(self.getId()+" : election : received rejection message from "+e.getSource().getId());
             expectedElectors = null;
             
             // TODO : Contact preferred peer
@@ -227,8 +250,10 @@ public class LeaderElector extends ComponentDefinition{
     Handler<ElectionTimeout> handleElectionTimeout = new Handler<ElectionTimeout>() {
         @Override
         public void handle(ElectionTimeout e) {
+            logger.debug(self.getId()+" : election : timeout");
             // If election hasn't been completed yet...
             if (expectedElectors != null) {
+                logger.debug(self.getId()+" : election : I got elected !");
                 // ... then I am the new leader
                 currentLeader = self;
                 expectedElectors = null;
@@ -237,6 +262,10 @@ public class LeaderElector extends ComponentDefinition{
     };
     
     Address getBestPeerFrom(List<Address> peers, Address other) {
+        if (peers == null || peers.isEmpty()) {
+            return other;
+        }
+        
         Address best = peers.get(0);
         for (Address a : peers) {
             if (a.getId() > best.getId()) {
@@ -254,5 +283,14 @@ public class LeaderElector extends ComponentDefinition{
         else {
             return best;
         }
+    }
+    
+    // For debug purposes
+    String printAdresses(List<Address> list)
+    {
+        String str = "[";
+        for (Address d : list)
+            str += d.getId()+"; ";
+        return str + "]";
     }
 }
