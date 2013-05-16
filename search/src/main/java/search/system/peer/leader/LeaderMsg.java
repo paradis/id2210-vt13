@@ -4,6 +4,8 @@
  */
 package search.system.peer.leader;
 
+import java.util.List;
+import java.util.SortedSet;
 import se.sics.kompics.address.Address;
 import se.sics.kompics.network.Message;
 
@@ -37,35 +39,36 @@ public class LeaderMsg {
         }
     }
     
-    public static class AskCurrentLeader extends Message {
-        AskCurrentLeader(Address source, Address destination) {
+    public static class AskLeaderInfos extends Message {
+        private Address _suspectedLeader;
+        
+        AskLeaderInfos(Address source, Address destination, Address suspectedLeader) {
             super(source, destination);
+            _suspectedLeader = suspectedLeader;
         }
+        
+        public Address getSuspectedLeader() {
+            return _suspectedLeader;
+        }
+        
     }
     
-    public static class SendCurrentLeader extends Message {
+    public static class AnswerLeaderInfos extends Message {
         private Address _currentLeader;
+        private SortedSet<Address> _bestPeers;
 
         public Address getCurrentLeader() {
             return _currentLeader;
         }
         
-        SendCurrentLeader(Address source, Address destination, Address currentLeader) {
-            super(source, destination);
-            _currentLeader = currentLeader;
-        }
-    }
-    
-    public static class SendBestPeer extends Message {
-        private Address _bestPeer;
-
-        public Address getBestPeer() {
-            return _bestPeer;
+        public SortedSet<Address> getBestPeers() {
+            return _bestPeers;
         }
         
-        SendBestPeer(Address source, Address destination, Address bestPeer) {
+        AnswerLeaderInfos(Address source, Address destination, Address currentLeader, SortedSet<Address> bestPeers) {
             super(source, destination);
-            _bestPeer = bestPeer;
+            _currentLeader = currentLeader;
+            _bestPeers = bestPeers;
         }
     }
 }

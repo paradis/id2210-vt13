@@ -11,8 +11,8 @@ import se.sics.kompics.timer.Timeout;
  *
  * @author alban
  */
-public class LeaderRequestTimeout extends Timeout {
-    LeaderRequestTimeout(ScheduleTimeout st) {
+public class LeaderInfosTimeout extends Timeout {
+    LeaderInfosTimeout(ScheduleTimeout st) {
         super(st);
     }
 }
