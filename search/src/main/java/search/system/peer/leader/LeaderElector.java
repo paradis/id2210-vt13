@@ -7,6 +7,7 @@ package search.system.peer.leader;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.TreeSet;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -19,6 +20,7 @@ import se.sics.kompics.address.Address;
 import se.sics.kompics.network.Network;
 import se.sics.kompics.timer.CancelTimeout;
 import se.sics.kompics.timer.ScheduleTimeout;
+import se.sics.kompics.timer.SchedulePeriodicTimeout;
 import se.sics.kompics.timer.Timer;
 import search.system.peer.leader.LeaderMsg.Accept;
 import search.system.peer.leader.LeaderMsg.AskLeaderInfos;
@@ -27,9 +29,6 @@ import search.system.peer.leader.LeaderMsg.AnswerLeaderInfos;
 import search.system.peer.search.SearchInit;
 import tman.system.peer.tman.TManSample;
 
-/*
- * TODO: accélérer convergence: leader election toutes les 100sec, avec démarrage aléatoire?
- */
 public class LeaderElector extends ComponentDefinition{
     private static final Logger logger = LoggerFactory.getLogger(LeaderElector.class);
 
@@ -37,7 +36,8 @@ public class LeaderElector extends ComponentDefinition{
     private static final int config_timeout_election = 10000;
     private static final int config_timeout_info = 2000;
     private static final int config_max_requests = 3;
-    private static final int  config_size_bestPeers = 10;
+    private static final int config_size_bestPeers = 10;
+    private static final int config_timeout_update = 60000;
 
     Negative<LeaderElectionPort> leaderElectionPort = negative(LeaderElectionPort.class);
     Positive<Network> networkPort = positive(Network.class);
@@ -71,12 +71,18 @@ public class LeaderElector extends ComponentDefinition{
         subscribe(handleAskLeaderInfos, networkPort);
         subscribe(handleAnswerLeaderInfos, networkPort);
         subscribe(handleLeaderInfosTimeout, timerPort);
+
+        subscribe(handleUpdateLeaderTimeout, timerPort);
     }
 
     Handler<SearchInit> handleInit = new Handler<SearchInit>() {
         @Override
         public void handle(SearchInit init) {
             self = init.getSelf();
+
+            SchedulePeriodicTimeout rst = new SchedulePeriodicTimeout(new Random().nextInt(config_timeout_update), config_timeout_update);
+            rst.setTimeoutEvent(new UpdateLeaderTimeout(rst));
+            trigger(rst, timerPort);
         }
     };
 
@@ -97,7 +103,7 @@ public class LeaderElector extends ComponentDefinition{
             }
             //here we check if the leader is up
             else if (currentLeader != null)
-                launchRequest(currentLeader);
+                askInfos(currentLeader);
             else
                 launchRequests();
 
@@ -113,7 +119,7 @@ public class LeaderElector extends ComponentDefinition{
             if (e.getSuspectedLeader() != null && e.getSuspectedLeader() == currentLeader)
             {
                 logger.debug(self.getId()+" : Leader (" + currentLeader.getId() + ") suspected by " + e.getSource().getId());
-                launchRequest(currentLeader);
+                askInfos(currentLeader);
                 trigger(new LeaderMsg.AnswerLeaderInfos(self, e.getSource(), null, bestPeers), networkPort);
             }
             else
@@ -139,11 +145,11 @@ public class LeaderElector extends ComponentDefinition{
                 if (e.getCurrentLeader() == e.getSource())
                 {
                     currentLeader = e.getCurrentLeader();
+                    logger.debug(self.getId()+" : Found Leader: " + currentLeader.getId());
                     if (peerRequest)
                     {
                         peerRequest = false;
                         trigger (new LeaderResponse(currentLeader), leaderElectionPort);
-                        logger.debug(self.getId()+" : Found Leader: " + currentLeader.getId());
                     }
                 }
                 else
@@ -152,7 +158,7 @@ public class LeaderElector extends ComponentDefinition{
                         currentLeader = null;
 
                     bestPeers.add(e.getCurrentLeader());
-                    launchRequest(e.getCurrentLeader());
+                    askInfos(e.getCurrentLeader());
                 }
             }
             else
@@ -183,7 +189,7 @@ public class LeaderElector extends ComponentDefinition{
 
             launchRequests();
 
-            // We have already signaled that our leader were suspected to at most 3 best Peers; no need to continue
+            // We have already signaled that our leader were suspected to at most config_max_requests best Peers; no need to continue
             oldLeader = null;
         }
     };
@@ -199,7 +205,7 @@ public class LeaderElector extends ComponentDefinition{
             Address peer = selectNextPeer();
 
             if (peer != null)
-                launchRequest(peer);
+                askInfos(peer);
             else
             {
                 // we have no possibility to find a leader
@@ -230,17 +236,28 @@ public class LeaderElector extends ComponentDefinition{
     /*
      * Ask for leader and peers to a peer
      */
-    void launchRequest(Address peer)
+    void askInfos(Address peer)
     {
         if (currentRequests.containsKey(peer))
             return;
 
         trigger(new LeaderMsg.AskLeaderInfos(self, peer, oldLeader), networkPort);
 
-        LeaderInfosTimeout timeout = new LeaderInfosTimeout(new ScheduleTimeout(config_timeout_info));
-        trigger(timeout, timerPort);
-        currentRequests.put(peer, timeout.getTimeoutId());
+        ScheduleTimeout st = new ScheduleTimeout(config_timeout_info);
+        st.setTimeoutEvent(new LeaderInfosTimeout(st));
+        currentRequests.put(peer, st.getTimeoutEvent().getTimeoutId());
+        trigger(st, timerPort);
     }
+
+    Handler<UpdateLeaderTimeout> handleUpdateLeaderTimeout = new Handler<UpdateLeaderTimeout>() {
+        @Override
+        public void handle(UpdateLeaderTimeout e) {
+            if (currentLeader != null)
+                askInfos(currentLeader);
+            else
+                launchRequests();
+        }
+    };
 
     Handler<TManSample> handleTManSample = new Handler<TManSample>() {
         @Override
@@ -292,7 +309,7 @@ public class LeaderElector extends ComponentDefinition{
 
             if (currentLeader != null && currentLeader.getId() > e.getSource().getId()) {
                 // check if leader is still up
-                launchRequest(currentLeader);
+                askInfos(currentLeader);
                 trigger(new LeaderMsg.Reject(self, e.getSource(), currentLeader), networkPort);
             }
             else if (tmanNeighbours == null) {
@@ -334,7 +351,7 @@ public class LeaderElector extends ComponentDefinition{
             logger.debug(self.getId()+" : election : received rejection message from "+e.getSource().getId());
             expectedElectors = null;
 
-            launchRequest(e.getBetterPeer());
+            askInfos(e.getBetterPeer());
         }
     };
 

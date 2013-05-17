@@ -14,11 +14,11 @@ public class ComparatorAddressById implements Comparator<Address> {
 
     @Override
     public int compare(Address o1, Address o2) {
-        assert (o1.getId() == o2.getId());
-        if (o1.getId() < o2.getId())
+        if (o1.getId() == o2.getId())
+            return 0;
+        else if (o1.getId() < o2.getId())
             return 1;
         else
             return -1;
     }
-    
 }
