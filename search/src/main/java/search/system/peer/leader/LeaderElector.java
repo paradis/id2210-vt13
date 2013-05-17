@@ -8,8 +8,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
-import java.util.TreeSet;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentSkipListSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import se.sics.kompics.ComponentDefinition;
@@ -19,13 +19,13 @@ import se.sics.kompics.Positive;
 import se.sics.kompics.address.Address;
 import se.sics.kompics.network.Network;
 import se.sics.kompics.timer.CancelTimeout;
-import se.sics.kompics.timer.ScheduleTimeout;
 import se.sics.kompics.timer.SchedulePeriodicTimeout;
+import se.sics.kompics.timer.ScheduleTimeout;
 import se.sics.kompics.timer.Timer;
 import search.system.peer.leader.LeaderMsg.Accept;
+import search.system.peer.leader.LeaderMsg.AnswerLeaderInfos;
 import search.system.peer.leader.LeaderMsg.AskLeaderInfos;
 import search.system.peer.leader.LeaderMsg.Reject;
-import search.system.peer.leader.LeaderMsg.AnswerLeaderInfos;
 import search.system.peer.search.SearchInit;
 import tman.system.peer.tman.TManSample;
 
@@ -38,6 +38,7 @@ public class LeaderElector extends ComponentDefinition{
     private static final int config_max_requests = 3;
     private static final int config_size_bestPeers = 10;
     private static final int config_timeout_update = 60000;
+    private static final int config_delay_tryagain = 4000; //When we have no peer and a leader is requested
 
     Negative<LeaderElectionPort> leaderElectionPort = negative(LeaderElectionPort.class);
     Positive<Network> networkPort = positive(Network.class);
@@ -45,7 +46,7 @@ public class LeaderElector extends ComponentDefinition{
 
     Address self;
     List<Address> tmanNeighbours = null;
-    TreeSet<Address> bestPeers;    // Known peers with highest utility
+    ConcurrentSkipListSet<Address> bestPeers;    // Known peers with highest utility
     Map<Address, UUID> currentRequests;
 
     Address currentLeader = null;
@@ -55,7 +56,7 @@ public class LeaderElector extends ComponentDefinition{
     List<Address> expectedElectors = null;  // List of electors whose answer is awaited ; must be null if no ongoing election
 
     public LeaderElector() {
-        bestPeers = new TreeSet<Address>(new ComparatorAddressById());
+        bestPeers = new ConcurrentSkipListSet<Address>(new ComparatorAddressById());
         currentRequests = new HashMap<Address, UUID>();
 
         subscribe(handleInit, control);
@@ -92,6 +93,10 @@ public class LeaderElector extends ComponentDefinition{
     Handler<LeaderRequest> handleLeaderRequest = new Handler<LeaderRequest>() {
         @Override
         public void handle(LeaderRequest e) {
+            if (peerRequest) {
+                return;
+            }
+            
             peerRequest = true;
 
             //already done
@@ -102,10 +107,12 @@ public class LeaderElector extends ComponentDefinition{
                 logger.debug(self.getId()+" : LeaderRequest: We are the leader");
             }
             //here we check if the leader is up
-            else if (currentLeader != null)
+            else if (currentLeader != null) {
                 askInfos(currentLeader);
-            else
+            }
+            else {
                 launchRequests();
+            }
 
         }
     };
@@ -122,8 +129,9 @@ public class LeaderElector extends ComponentDefinition{
                 askInfos(currentLeader);
                 trigger(new LeaderMsg.AnswerLeaderInfos(self, e.getSource(), null, bestPeers), networkPort);
             }
-            else
+            else {
                 trigger(new LeaderMsg.AnswerLeaderInfos(self, e.getSource(), currentLeader, bestPeers), networkPort);
+            }
         }
     };
 
@@ -154,15 +162,17 @@ public class LeaderElector extends ComponentDefinition{
                 }
                 else
                 {
-                    if (currentLeader == e.getSource())
+                    if (currentLeader == e.getSource()) {
                         currentLeader = null;
+                    }
 
                     bestPeers.add(e.getCurrentLeader());
                     askInfos(e.getCurrentLeader());
                 }
             }
-            else
+            else {
                 launchRequests();
+            }
 
         }
     };
@@ -204,15 +214,17 @@ public class LeaderElector extends ComponentDefinition{
         {
             Address peer = selectNextPeer();
 
-            if (peer != null)
+            if (peer != null) {
                 askInfos(peer);
+            }
             else
             {
-                // we have no possibility to find a leader
+                // we have no possibility to find a leader, so we wait and try again
                 if (currentRequests.isEmpty())
                 {
-                    peerRequest = false;
-                    trigger(new LeaderResponse(null), leaderElectionPort);
+                    ScheduleTimeout rst = new ScheduleTimeout(config_delay_tryagain);
+                    rst.setTimeoutEvent(new UpdateLeaderTimeout(rst));
+                    trigger(rst, timerPort);
                 }
 
                 return;
@@ -226,8 +238,9 @@ public class LeaderElector extends ComponentDefinition{
     Address selectNextPeer() {
         // TODO: à vérifier, en particulier itération
         for (Address peer : bestPeers) {
-            if (!currentRequests.containsKey(peer))
+            if (!currentRequests.containsKey(peer)) {
                 return peer;
+            }
         }
 
         return null;
@@ -238,8 +251,9 @@ public class LeaderElector extends ComponentDefinition{
      */
     void askInfos(Address peer)
     {
-        if (currentRequests.containsKey(peer))
+        if (currentRequests.containsKey(peer)) {
             return;
+        }
 
         trigger(new LeaderMsg.AskLeaderInfos(self, peer, oldLeader), networkPort);
 
@@ -252,18 +266,21 @@ public class LeaderElector extends ComponentDefinition{
     Handler<UpdateLeaderTimeout> handleUpdateLeaderTimeout = new Handler<UpdateLeaderTimeout>() {
         @Override
         public void handle(UpdateLeaderTimeout e) {
-            if (currentLeader != null)
+            if (currentLeader != null) {
                 askInfos(currentLeader);
-            else
+            }
+            else {
                 launchRequests();
+            }
         }
     };
 
     Handler<TManSample> handleTManSample = new Handler<TManSample>() {
         @Override
         public void handle(TManSample event) {
-            if (event.getSample().isEmpty())
+            if (event.getSample().isEmpty()) {
                 return;
+            }
 
             bestPeers.addAll(event.getSample());
             cleanBestPeers();
@@ -276,6 +293,7 @@ public class LeaderElector extends ComponentDefinition{
                 // Do not consider myself the leader any more
                 currentLeader = null;
                 logger.debug(self.getId()+" : "+bestNeighbour.getId()+" discovered as better node, so I abdicate.");
+                trigger(new LeaderElectionNotify(self), leaderElectionPort);
             }
 
             if(noLargerId) {
@@ -336,9 +354,14 @@ public class LeaderElector extends ComponentDefinition{
                 logger.debug(self.getId()+" : election : received acceptance message from "+e.getSource().getId());
                 expectedElectors.remove(e.getSource());
                 if (expectedElectors.isEmpty()) {
+                    // Signal your peer that he is the new leader (even though he didn't ask for it), and give him the lod leader as well.
+                    trigger(new LeaderElectionNotify(currentLeader), leaderElectionPort);
+                    
                     currentLeader = self;
                     expectedElectors = null;
                     logger.debug(self.getId()+" : election : I got elected !");
+                    
+                    
                 }
             }
         }
@@ -397,8 +420,9 @@ public class LeaderElector extends ComponentDefinition{
     String printAdresses(List<Address> list)
     {
         String str = "[";
-        for (Address d : list)
+        for (Address d : list) {
             str += d.getId()+"; ";
+        }
         return str + "]";
     }
 
@@ -406,14 +430,17 @@ public class LeaderElector extends ComponentDefinition{
     {
         bestPeers.remove(self);
 
-        while(bestPeers.size() >= config_size_bestPeers)
+        while(bestPeers.size() >= config_size_bestPeers) {
             bestPeers.pollLast();
+        }
     }
 
     Address getKeyFromValue(UUID value) {
-        for (Address a : currentRequests.keySet())
-            if (currentRequests.get(a) == value)
+        for (Address a : currentRequests.keySet()) {
+            if (currentRequests.get(a) == value) {
                 return a;
+            }
+        }
 
         return null;
     }

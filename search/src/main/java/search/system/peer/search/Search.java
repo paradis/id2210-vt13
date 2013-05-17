@@ -10,9 +10,15 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Random;
+import java.util.TreeMap;
+import java.util.UUID;
 import java.util.logging.Level;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
@@ -46,7 +52,9 @@ import se.sics.kompics.Negative;
 import se.sics.kompics.Positive;
 import se.sics.kompics.address.Address;
 import se.sics.kompics.network.Network;
+import se.sics.kompics.timer.CancelTimeout;
 import se.sics.kompics.timer.SchedulePeriodicTimeout;
+import se.sics.kompics.timer.ScheduleTimeout;
 import se.sics.kompics.timer.Timer;
 import se.sics.kompics.web.Web;
 import se.sics.kompics.web.WebRequest;
@@ -54,8 +62,12 @@ import se.sics.kompics.web.WebResponse;
 import search.simulator.snapshot.Snapshot;
 import search.system.peer.AddIndexText;
 import search.system.peer.IndexPort;
+import search.system.peer.leader.LeaderElectionNotify;
 import search.system.peer.leader.LeaderElectionPort;
+import search.system.peer.leader.LeaderInfosTimeout;
 import search.system.peer.leader.LeaderMsg.Apply;
+import search.system.peer.leader.LeaderRequest;
+import search.system.peer.leader.LeaderResponse;
 import tman.system.peer.tman.TManSample;
 import tman.system.peer.tman.TManSamplePort;
 
@@ -85,6 +97,9 @@ public final class Search extends ComponentDefinition {
     int lastMissingIndexEntry = 1;
     int maxIndexEntry = 0;
     Random random;
+    Queue<String> addingEntryQueue = new LinkedList<String>();
+    TreeMap<UUID, String> currentRequests = new TreeMap<UUID, String> ();
+    boolean leaderReady = false;
     
     // When you partition the index you need to find new nodes
     // This is a routing table maintaining a list of pairs in each partition.
@@ -111,6 +126,14 @@ public final class Search extends ComponentDefinition {
         subscribe(handleMissingIndexEntriesRequest, networkPort);
         subscribe(handleMissingIndexEntriesResponse, networkPort);
         subscribe(handleTManSample, tmanPort);
+        subscribe(handleIdRequest, networkPort);
+        subscribe(handleIdResponse, networkPort);
+        subscribe(handleIdRequestTimeout, timerPort);
+        subscribe(handleMaxIdRequest, networkPort);
+        subscribe(handleMaxIdResponse, networkPort);
+        subscribe(handleMaxIdTimeout, timerPort);
+        subscribe(handleLeaderElectionNotify, leaderElectionPort);
+        subscribe(handleLeaderResponse, leaderElectionPort);
     }
 //-------------------------------------------------------------------	
     Handler<SearchInit> handleInit = new Handler<SearchInit>() {
@@ -488,16 +511,9 @@ public final class Search extends ComponentDefinition {
     Handler<AddIndexText> handleAddIndexText = new Handler<AddIndexText>() {
         @Override
         public void handle(AddIndexText event) {
-            int id = LeaderEmulator.incIndexId();
-            updateIndexPointers(id);
-            logger.info(self.getId()
-                    + " - adding index entry: {} Id={}", event.getText(), id);
-            try {
-                addEntry(event.getText(), id);
-            } catch (IOException ex) {
-                java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
-                throw new IllegalArgumentException(ex.getMessage());
-            }
+            addingEntryQueue.add(event.getText());
+            trigger(new LeaderRequest(), leaderElectionPort);
+            logger.debug(self.getId()+" : requested leader for entry "+event.getText());
         }
     };
     Handler<TManSample> handleTManSample = new Handler<TManSample>() {
@@ -522,4 +538,119 @@ public final class Search extends ComponentDefinition {
         Document d = searcher.doc(docId);
         return Integer.parseInt(d.get("id"));
     }
+    
+    Handler<LeaderElectionNotify> handleLeaderElectionNotify = new Handler<LeaderElectionNotify>() {
+        @Override
+        public void handle(LeaderElectionNotify e) {
+            leaderReady = false;
+            logger.debug(self.getId()+" : received election notification");
+            
+            if (e.getOldLeader() == self) {
+                return;
+            }
+            
+            if (e.getOldLeader() != null) {
+                trigger(new MaxIdRequest(self, e.getOldLeader()), networkPort);
+            }
+            
+            ScheduleTimeout st = new ScheduleTimeout(10000);
+            st.setTimeoutEvent(new MaxIdTimeout(st));
+            trigger(st, timerPort);
+        }
+    };
+    
+    Handler<MaxIdRequest> handleMaxIdRequest = new Handler<MaxIdRequest>() {
+        @Override
+        public void handle(MaxIdRequest e) {
+            trigger(new MaxIdResponse(self, e.getSource(), maxIndexEntry), networkPort);
+        }
+    };
+    
+    Handler<MaxIdResponse> handleMaxIdResponse = new Handler<MaxIdResponse>() {
+        @Override
+        public void handle(MaxIdResponse e) {
+            maxIndexEntry = Math.max (e.getResponse(), maxIndexEntry);
+            leaderReady = true;
+        }
+    };
+    
+    Handler<MaxIdTimeout> handleMaxIdTimeout = new Handler<MaxIdTimeout>() {
+        @Override
+        public void handle(MaxIdTimeout e) {
+            leaderReady = true;
+        }
+    };
+    
+    Handler<LeaderResponse> handleLeaderResponse = new Handler<LeaderResponse>() {
+        @Override
+        public void handle(LeaderResponse e) {
+            if (e.getLeader() == null) {
+                logger.error(self.getId()+" received leader response, but it was empty");
+                // Wait for timeout, an then we'll try again
+                return;
+            }
+            
+            logger.debug(self.getId()+" received leader response : "+e.getLeader().getId() );
+            
+            while(!addingEntryQueue.isEmpty()) {
+                trigger(new IdRequest(self, e.getLeader()), networkPort);
+                logger.debug(self.getId()+" requested id for entry");
+                
+                // TODO : correct period
+                ScheduleTimeout st = new ScheduleTimeout(2000);
+                st.setTimeoutEvent(new IdRequestTimeout(st));
+                
+                currentRequests.put(st.getTimeoutEvent().getTimeoutId(), addingEntryQueue.poll());
+                trigger(st, timerPort);
+            }
+        }
+    };
+    
+    Handler<IdResponse> handleIdResponse = new Handler<IdResponse>() {
+        @Override
+        public void handle(IdResponse e) {
+            logger.debug(self.getId()+" : received id response ["+e.getResponse()+"]");
+            
+            // IMPROVEMENT : remove eldest timeout instead of first one
+            Map.Entry<UUID,String> entry = currentRequests.pollFirstEntry();
+            
+            trigger(new CancelTimeout(entry.getKey()), timerPort);
+            
+            int id = e.getResponse();
+            updateIndexPointers(id);
+            logger.info(self.getId() + " - adding index entry: {} Id={}", entry.getValue(), id);
+            try {
+                addEntry(entry.getValue(), id);
+            } catch (IOException ex) {
+                java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
+                throw new IllegalArgumentException(ex.getMessage());
+            }
+        }
+    };
+    
+    Handler<IdRequestTimeout> handleIdRequestTimeout = new Handler<IdRequestTimeout>() {
+        @Override
+        public void handle(IdRequestTimeout e) {
+            String entry = currentRequests.remove(e.getTimeoutId());
+            
+            addingEntryQueue.add(entry);
+            trigger(new LeaderRequest(), leaderElectionPort);
+        }
+    };
+    
+    Handler<IdRequest> handleIdRequest = new Handler<IdRequest>() {
+        @Override
+        public void handle(IdRequest e) {
+            // If I'm not able to handle id requests, drop the message
+            if (!leaderReady) {
+                logger.debug(self.getId()+" : received id request, but I don't feel ready");
+                return;
+            }
+            
+            logger.debug(self.getId()+" : received id request, I will answer with "+(maxIndexEntry+1));
+            
+            maxIndexEntry++;
+            trigger(new IdResponse(self, e.getSource(), maxIndexEntry), networkPort);
+        }
+    };
 }

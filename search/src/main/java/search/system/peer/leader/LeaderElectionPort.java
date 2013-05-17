@@ -16,4 +16,5 @@ public class LeaderElectionPort extends PortType {{
     negative(TManSample.class);
     negative(LeaderRequest.class);
     positive(LeaderResponse.class);
+    positive(LeaderElectionNotify.class);
 }}

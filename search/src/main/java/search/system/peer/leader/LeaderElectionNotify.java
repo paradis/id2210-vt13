@@ -11,14 +11,14 @@ import se.sics.kompics.address.Address;
  *
  * @author alban
  */
-public class LeaderResponse extends Event {
-    Address _leader;
-    
-    LeaderResponse(Address leader) {
-        _leader = leader;
+public class LeaderElectionNotify extends Event{
+    private Address _oldLeader;
+
+    public Address getOldLeader() {
+        return _oldLeader;
     }
-    
-    public Address getLeader() {
-        return _leader;
+
+    public LeaderElectionNotify(Address _oldLeader) {
+        this._oldLeader = _oldLeader;
     }
 }
