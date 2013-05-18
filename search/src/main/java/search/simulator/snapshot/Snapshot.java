@@ -75,6 +75,7 @@ public class Snapshot {
         int maxNumIndexEntries = 0;
         int minNumIndexEntries = Integer.MAX_VALUE;
         for (PeerInfo p : peers.values()) {
+            System.out.println("Peer " + p.toString() + " has " + p.getNumIndexEntries());
             if (p.getNumIndexEntries() < minNumIndexEntries) {
                 minNumIndexEntries = p.getNumIndexEntries();
             }

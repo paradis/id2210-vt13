@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -17,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Random;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.logging.Level;
@@ -88,6 +90,7 @@ public final class Search extends ComponentDefinition {
     Positive<LeaderElectionPort> leaderElectionPort = positive(LeaderElectionPort.class);
     
     ArrayList<Address> neighbours = new ArrayList<Address>();
+    List<Address> tmanSample = new ArrayList<Address>();
     private Address self;
     private SearchConfiguration searchConfiguration;
     // Apache Lucene used for searching
@@ -287,10 +290,16 @@ public final class Search extends ComponentDefinition {
             // pick a random neighbour to ask for index updates from. 
             // You can change this policy if you want to.
             // Maybe a gradient neighbour who is closer to the leader?
-            if (neighbours.isEmpty()) {
+            if (tmanSample.isEmpty() && neighbours.isEmpty()) {
                 return;
             }
-            Address dest = neighbours.get(random.nextInt(neighbours.size()));
+            
+            // We prefer tman over our neighbours
+            ArrayList<Address> allNeighbours = new ArrayList<Address>(neighbours);
+            allNeighbours.addAll(tmanSample);
+            allNeighbours.addAll(tmanSample);
+            
+            Address dest = allNeighbours.get(random.nextInt(allNeighbours.size()));
 
             // find all missing index entries (ranges) between lastMissingIndexValue
             // and the maxIndexValue
@@ -519,7 +528,7 @@ public final class Search extends ComponentDefinition {
     Handler<TManSample> handleTManSample = new Handler<TManSample>() {
         @Override
         public void handle(TManSample event) {
-            // TODO : bypass this component
+            tmanSample = event.getSample();
             trigger(event, leaderElectionPort);
         }
     };
@@ -593,14 +602,15 @@ public final class Search extends ComponentDefinition {
             logger.debug(self.getId()+" received leader response : "+e.getLeader().getId() );
             
             while(!addingEntryQueue.isEmpty()) {
-                trigger(new IdRequest(self, e.getLeader()), networkPort);
-                logger.debug(self.getId()+" requested id for entry");
+                String entry = addingEntryQueue.poll();
+                trigger(new IdRequest(self, e.getLeader(), entry), networkPort);
+                logger.debug(self.getId()+" requested id for entry " + entry);
                 
                 // TODO : correct period
                 ScheduleTimeout st = new ScheduleTimeout(2000);
                 st.setTimeoutEvent(new IdRequestTimeout(st));
                 
-                currentRequests.put(st.getTimeoutEvent().getTimeoutId(), addingEntryQueue.poll());
+                currentRequests.put(st.getTimeoutEvent().getTimeoutId(), entry);
                 trigger(st, timerPort);
             }
         }
@@ -609,18 +619,26 @@ public final class Search extends ComponentDefinition {
     Handler<IdResponse> handleIdResponse = new Handler<IdResponse>() {
         @Override
         public void handle(IdResponse e) {
-            logger.debug(self.getId()+" : received id response ["+e.getResponse()+"]");
             
-            // IMPROVEMENT : remove eldest timeout instead of first one
-            Map.Entry<UUID,String> entry = currentRequests.pollFirstEntry();
+            int idEntry = e.getEntryId();
+            String entry = e.getEntry();
             
-            trigger(new CancelTimeout(entry.getKey()), timerPort);
+            logger.debug(self.getId() + " : received id response [" + idEntry + ", " + entry + "]");
             
-            int id = e.getResponse();
-            updateIndexPointers(id);
-            logger.info(self.getId() + " - adding index entry: {} Id={}", entry.getValue(), id);
+            UUID timeout = getKeyFromValue(currentRequests, entry);
+            if (timeout == null)
+            {
+                logger.error(self.getId() + " : Invalid entry: " + entry);
+                return;
+            }
+            
+            currentRequests.remove(timeout);
+            
+            trigger(new CancelTimeout(timeout), timerPort);
+
+            logger.info(self.getId() + " - adding index entry: {} Id={}", entry, idEntry);
             try {
-                addEntry(entry.getValue(), id);
+                addEntry(entry, idEntry);
             } catch (IOException ex) {
                 java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
                 throw new IllegalArgumentException(ex.getMessage());
@@ -647,10 +665,28 @@ public final class Search extends ComponentDefinition {
                 return;
             }
             
-            logger.debug(self.getId()+" : received id request, I will answer with "+(maxIndexEntry+1));
+            String entry = e.getEntry();
+            int entryId = ++maxIndexEntry;
             
-            maxIndexEntry++;
-            trigger(new IdResponse(self, e.getSource(), maxIndexEntry), networkPort);
+            logger.debug(self.getId()+" : received id request for entry: " + entry + ", id: "+ entryId);
+            
+            try {
+                addEntry(entry, entryId);
+            } catch (IOException ex) {
+                java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
+            }
+            
+            trigger(new IdResponse(self, e.getSource(), entryId, entry), networkPort);
         }
     };
+    
+    UUID getKeyFromValue(Map<UUID, String> map, String value) {
+        for (UUID a : map.keySet()) {
+            if (map.get(a).equals(value)) {
+                return a;
+            }
+        }
+
+        return null;
+    }
 }

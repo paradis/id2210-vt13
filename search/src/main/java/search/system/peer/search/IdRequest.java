@@ -12,7 +12,14 @@ import se.sics.kompics.network.Message;
  * @author alban
  */
 public class IdRequest extends Message {
-    public IdRequest(Address source, Address destination) {
+    private String entry;
+
+    public IdRequest(Address source, Address destination, String entry) {
         super(source, destination);
+        this.entry = entry;
+    }
+
+    public String getEntry() {
+        return entry;
     }
 }

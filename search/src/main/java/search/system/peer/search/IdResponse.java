@@ -12,14 +12,20 @@ import se.sics.kompics.network.Message;
  * @author alban
  */
 public class IdResponse extends Message {
-    private int response;
+    private int entryId;
+    private String entry;
 
-    public int getResponse() {
-        return response;
+    public int getEntryId() {
+        return entryId;
     }
 
-    public IdResponse(Address source, Address dest, int response) {
+    public String getEntry() {
+        return entry;
+    }
+
+    public IdResponse(Address source, Address dest, int entryId, String entry) {
         super(source, dest);
-        this.response = response;
+        this.entryId = entryId;
+        this.entry = entry;
     }
 }
