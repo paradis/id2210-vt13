@@ -8,7 +8,7 @@ import se.sics.kompics.Event;
 import se.sics.kompics.address.Address;
 
 /**
- *
+ * Notification that the Peer has been elected OR, if _oldLeader == self, that the Peer has abdicated
  * @author alban
  */
 public class LeaderElectionNotify extends Event{

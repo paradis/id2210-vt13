@@ -7,7 +7,7 @@ package search.system.peer.leader;
 import se.sics.kompics.Event;
 
 /**
- *
+ * Leader request from Peer to LeaderElector
  * @author alban
  */
 public class LeaderRequest extends Event {

@@ -8,7 +8,7 @@ import se.sics.kompics.timer.ScheduleTimeout;
 import se.sics.kompics.timer.Timeout;
 
 /**
- *
+ * Timeout event for leader info requests ; corresponds to LeaderMsg.AskLeaderInfos and LeaderMsg.AnswerLeaderInfos messages
  * @author alban
  */
 public class LeaderInfosTimeout extends Timeout {

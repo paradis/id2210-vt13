@@ -8,7 +8,7 @@ import se.sics.kompics.Event;
 import se.sics.kompics.address.Address;
 
 /**
- *
+ * Leader request response from LeaderElector to Peer
  * @author alban
  */
 public class LeaderResponse extends Event {

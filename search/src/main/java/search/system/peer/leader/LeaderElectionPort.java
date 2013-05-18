@@ -1,15 +1,11 @@
 package search.system.peer.leader;
 
-import se.sics.kompics.Negative;
 import se.sics.kompics.PortType;
-import se.sics.kompics.Positive;
-import se.sics.kompics.network.Network;
-import se.sics.kompics.timer.Timer;
-import se.sics.kompics.web.Web;
 import tman.system.peer.tman.TManSample;
 
 /**
- *
+ * Interface of the LeaderElector component.
+ * It is able to receive TMan samples and leader requests ; it can answer those and send election/abdication notifications.
  * @author alban
  */
 public class LeaderElectionPort extends PortType {{

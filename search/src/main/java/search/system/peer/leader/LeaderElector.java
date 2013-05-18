@@ -32,7 +32,7 @@ import tman.system.peer.tman.TManSample;
 public class LeaderElector extends ComponentDefinition{
     private static final Logger logger = LoggerFactory.getLogger(LeaderElector.class);
 
-    //TODO
+    //TODO : put all that in a configuration class
     private static final int config_timeout_election = 10000;
     private static final int config_timeout_info = 2000;
     private static final int config_max_requests = 3;

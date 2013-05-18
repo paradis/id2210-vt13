@@ -9,6 +9,9 @@ import se.sics.kompics.address.Address;
 
 /**
  * Make Node with Highest Id Leader in the Gradient
+ * This is a comparator class. The first node according to this order is the one with the highest id.
+ * Sorted lists in java are stored in ascending order.
+ * Thus, the first node in a sorted list according to this order is the one with the highest id.
  */
 public class ComparatorAddressById implements Comparator<Address> {
 

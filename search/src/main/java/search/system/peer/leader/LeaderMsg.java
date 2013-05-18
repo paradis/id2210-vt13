@@ -12,6 +12,7 @@ import se.sics.kompics.network.Message;
 /**
  *
  * @author alban
+ *  Messages that can be exchanged by the different LeaderElector through the network to elect a leader or find informations on the current leader.
  */
 public class LeaderMsg {
      public static class Apply extends Message {
@@ -39,6 +40,11 @@ public class LeaderMsg {
         }
     }
     
+    /*
+     * Ask for the current leader.
+     * If suspectedLeader is not null, it means that the asking node suspects this node to be dead.
+     * If the answering node's currentLeader is suspectedLeader, the answering node is expected to check whether his leader is still alive.
+     */
     public static class AskLeaderInfos extends Message {
         private Address _suspectedLeader;
         
@@ -53,6 +59,11 @@ public class LeaderMsg {
         
     }
     
+    /*
+     * Give info concerning
+     * - the current leader, if it is known to the node
+     * - the best peers (those with highest ids) that the node knows
+     */
     public static class AnswerLeaderInfos extends Message {
         private Address _currentLeader;
         private SortedSet<Address> _bestPeers;
