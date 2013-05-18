@@ -55,6 +55,7 @@ public final class TMan extends ComponentDefinition {
 //-------------------------------------------------------------------	
     public TMan() {
         tmanPartners = new ArrayList<PeerDescriptor>();
+        cyclonPartners = new ArrayList<Address>();
 
         subscribe(handleInit, control);
         subscribe(handleRound, timerPort);
@@ -100,7 +101,12 @@ public final class TMan extends ComponentDefinition {
     Handler<CyclonSample> handleCyclonSample = new Handler<CyclonSample>() {
         @Override
         public void handle(CyclonSample event) {
-            cyclonPartners = event.getSample();
+            int myPartition = self.getId() % tmanConfiguration.getNumPartitions();
+            
+            cyclonPartners.clear();
+            for (Address a : event.getSample())
+                if (myPartition == a.getId() % tmanConfiguration.getNumPartitions())
+                    cyclonPartners.add(a);
 
             Address dest = selectPeer();
             if (dest == null)

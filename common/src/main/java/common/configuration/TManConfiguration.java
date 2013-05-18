@@ -11,15 +11,17 @@ public final class TManConfiguration {
 
     private final long period;
     private final long seed;
+    private final int numPartitions;
     private final double temperature;
     private final int sampleSize;
     private final int maxAge;
 
 //-------------------------------------------------------------------
-    public TManConfiguration(long seed, long period, double temperature, int sampleSize, int maxAge) {
+    public TManConfiguration(long seed, long period, int numPartitions, double temperature, int sampleSize, int maxAge) {
         super();
         this.seed = seed;
         this.period = period;
+        this.numPartitions = numPartitions;
         this.temperature = temperature;
         this.sampleSize = sampleSize;
         this.maxAge = maxAge;
@@ -34,6 +36,11 @@ public final class TManConfiguration {
         return this.period;
     }
 
+    //-------------------------------------------------------------------
+    public int getNumPartitions() {
+        return numPartitions;
+    }
+    
     //-------------------------------------------------------------------
     public double getTemperature() {
         return temperature;
@@ -54,6 +61,7 @@ public final class TManConfiguration {
         Properties p = new Properties();
         p.setProperty("seed", "" + seed);
         p.setProperty("period", "" + period);
+        p.setProperty("numPartitions", "" + numPartitions);
         p.setProperty("temperature", "" + temperature);
         p.setProperty("sampleSize", "" + sampleSize);
         p.setProperty("maxAge", "" + maxAge);
@@ -70,10 +78,11 @@ public final class TManConfiguration {
 
         long seed = Long.parseLong(p.getProperty("seed"));
         long period = Long.parseLong(p.getProperty("period"));
+        int numPartitions = Integer.parseInt(p.getProperty("numPartitions"));
         double temp = Double.parseDouble(p.getProperty("temperature"));
         int size = Integer.parseInt(p.getProperty("sampleSize"));
         int maxAge = Integer.parseInt(p.getProperty("maxAge"));
 
-        return new TManConfiguration(seed, period, temp, size, maxAge);
+        return new TManConfiguration(seed, period, numPartitions, temp, size, maxAge);
     }
 }

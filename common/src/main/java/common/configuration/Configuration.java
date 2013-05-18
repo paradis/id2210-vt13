@@ -32,10 +32,12 @@ public class Configuration {
 
     public Configuration(long seed) throws IOException {
         this.seed = seed;
-        searchConfiguration = new SearchConfiguration(seed);
-        tmanConfiguration = new TManConfiguration(seed, 1000, 0.8, 10, 10);
-        cyclonConfiguration = new CyclonConfiguration(seed, 5, 10, 1000, 500000,
-                (long) (Integer.MAX_VALUE - Integer.MIN_VALUE), 20);
+        
+        int numPartition = 1;
+        
+        searchConfiguration = new SearchConfiguration(2*1000, numPartition, 20, seed);
+        tmanConfiguration = new TManConfiguration(seed, 1000, numPartition, 0.8, 10, 10);
+        cyclonConfiguration = new CyclonConfiguration(seed, 5, 10, 1000, 500000, (long) (Integer.MAX_VALUE - Integer.MIN_VALUE), 20);
 
         String c = File.createTempFile("bootstrap.", ".conf").getAbsolutePath();
         bootConfiguration.store(c);

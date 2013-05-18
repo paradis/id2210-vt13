@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -137,6 +138,10 @@ public final class Search extends ComponentDefinition {
             self = init.getSelf();
             searchConfiguration = init.getConfiguration();
             routingTable = new HashMap<Integer, List<PeerDescriptor>>(searchConfiguration.getNumPartitions());
+            
+            for (int partition=0; partition < searchConfiguration.getNumPartitions(); partition++)
+                routingTable.put(partition, new ArrayList<PeerDescriptor>());
+            
             random = new Random(init.getConfiguration().getSeed());
             long period = searchConfiguration.getPeriod();
             SchedulePeriodicTimeout rst = new SchedulePeriodicTimeout(period, period);
@@ -278,18 +283,21 @@ public final class Search extends ComponentDefinition {
     Handler<UpdateIndexTimeout> handleUpdateIndexTimeout = new Handler<UpdateIndexTimeout>() {
         @Override
         public void handle(UpdateIndexTimeout event) {
-
-            // pick a random neighbour to ask for index updates from. 
-            // You can change this policy if you want to.
-            // Maybe a gradient neighbour who is closer to the leader?
-            if (tmanSample.isEmpty() && neighbours.isEmpty()) {
-                return;
-            }
             
-            // We prefer tman over our neighbours
-            ArrayList<Address> allNeighbours = new ArrayList<Address>(neighbours);
-            allNeighbours.addAll(tmanSample);
-            allNeighbours.addAll(tmanSample);
+            ArrayList<Address> allNeighbours = new ArrayList<Address>(tmanSample);
+            
+            // add some neighbours
+            int myPartition = self.getId() % searchConfiguration.getNumPartitions();
+         
+            List<Address> neigh = new ArrayList<Address>();
+            Iterator<PeerDescriptor> it = routingTable.get(myPartition).iterator();
+            while (it.hasNext() && neigh.size() < tmanSample.size() / 2)
+                neigh.add(it.next().getAddress());
+            
+            allNeighbours.addAll(neigh);
+            
+            if (allNeighbours.isEmpty())
+                return;
             
             Address dest = allNeighbours.get(random.nextInt(allNeighbours.size()));
 
@@ -491,10 +499,7 @@ public final class Search extends ComponentDefinition {
             for (Address p : neighbours) {
                 int partition = p.getId() % searchConfiguration.getNumPartitions();
                 List<PeerDescriptor> nodes = routingTable.get(partition);
-                if (nodes == null) {
-                    nodes = new ArrayList<PeerDescriptor>();
-                    routingTable.put(partition, nodes);
-                }
+
                 // Note - this might replace an existing entry in Lucene
                 nodes.add(new PeerDescriptor(p));
                 // keep the freshest descriptors in this partition
