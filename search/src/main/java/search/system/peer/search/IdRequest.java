@@ -9,7 +9,9 @@ import se.sics.kompics.network.Message;
 import se.sics.kompics.timer.ScheduleTimeout;
 
 /**
- *
+ * This three events are used by Peers who try to obtain a new id to add an entry.
+ * Request is... well, a request sent to the leader ; Response is the leader's response ;
+ * and Timeout is the corresponding timeout to detect lost messages/dead leaders.
  * @author alban
  */
 public class IdRequest {

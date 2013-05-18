@@ -9,8 +9,10 @@ import se.sics.kompics.network.Message;
 import se.sics.kompics.timer.ScheduleTimeout;
 
 /**
- *
- * @author alban
+ * Those events are used by new leaders who wish to set themselves up.
+ * They are sent to the older leader, if there is one (it might have abdicated, but still be alive).
+ * The older leader, if still around, will answer with its highest id, so the new leader can begin
+ * where the former leader stopped.
  */
 public class MaxIdRequest {
     public static class Request extends Message {
