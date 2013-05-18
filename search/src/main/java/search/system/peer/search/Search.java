@@ -1,6 +1,5 @@
 package search.system.peer.search;
 
-import search.system.peer.leader.LeaderMsg;
 import common.configuration.SearchConfiguration;
 import cyclon.system.peer.cyclon.CyclonSample;
 import cyclon.system.peer.cyclon.CyclonSamplePort;
@@ -10,15 +9,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Random;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.logging.Level;
@@ -47,7 +42,6 @@ import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.Version;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import se.sics.kompics.ComponentDefinition;
 import se.sics.kompics.Handler;
 import se.sics.kompics.Negative;
@@ -66,8 +60,6 @@ import search.system.peer.AddIndexText;
 import search.system.peer.IndexPort;
 import search.system.peer.leader.LeaderElectionNotify;
 import search.system.peer.leader.LeaderElectionPort;
-import search.system.peer.leader.LeaderInfosTimeout;
-import search.system.peer.leader.LeaderMsg.Apply;
 import search.system.peer.leader.LeaderRequest;
 import search.system.peer.leader.LeaderResponse;
 import tman.system.peer.tman.TManSample;
@@ -559,33 +551,33 @@ public final class Search extends ComponentDefinition {
             }
             
             if (e.getOldLeader() != null) {
-                trigger(new MaxIdRequest(self, e.getOldLeader()), networkPort);
+                trigger(new MaxIdRequest.Request(self, e.getOldLeader()), networkPort);
             }
             
             ScheduleTimeout st = new ScheduleTimeout(10000);
-            st.setTimeoutEvent(new MaxIdTimeout(st));
+            st.setTimeoutEvent(new MaxIdRequest.Timeout(st));
             trigger(st, timerPort);
         }
     };
     
-    Handler<MaxIdRequest> handleMaxIdRequest = new Handler<MaxIdRequest>() {
+    Handler<MaxIdRequest.Request> handleMaxIdRequest = new Handler<MaxIdRequest.Request>() {
         @Override
-        public void handle(MaxIdRequest e) {
-            trigger(new MaxIdResponse(self, e.getSource(), maxIndexEntry), networkPort);
+        public void handle(MaxIdRequest.Request e) {
+            trigger(new MaxIdRequest.Response(self, e.getSource(), maxIndexEntry), networkPort);
         }
     };
     
-    Handler<MaxIdResponse> handleMaxIdResponse = new Handler<MaxIdResponse>() {
+    Handler<MaxIdRequest.Response> handleMaxIdResponse = new Handler<MaxIdRequest.Response>() {
         @Override
-        public void handle(MaxIdResponse e) {
+        public void handle(MaxIdRequest.Response e) {
             maxIndexEntry = Math.max (e.getResponse(), maxIndexEntry);
             leaderReady = true;
         }
     };
     
-    Handler<MaxIdTimeout> handleMaxIdTimeout = new Handler<MaxIdTimeout>() {
+    Handler<MaxIdRequest.Timeout> handleMaxIdTimeout = new Handler<MaxIdRequest.Timeout>() {
         @Override
-        public void handle(MaxIdTimeout e) {
+        public void handle(MaxIdRequest.Timeout e) {
             leaderReady = true;
         }
     };
@@ -603,12 +595,12 @@ public final class Search extends ComponentDefinition {
             
             while(!addingEntryQueue.isEmpty()) {
                 String entry = addingEntryQueue.poll();
-                trigger(new IdRequest(self, e.getLeader(), entry), networkPort);
+                trigger(new IdRequest.Request(self, e.getLeader(), entry), networkPort);
                 logger.debug(self.getId()+" requested id for entry " + entry);
                 
                 // TODO : correct period
                 ScheduleTimeout st = new ScheduleTimeout(2000);
-                st.setTimeoutEvent(new IdRequestTimeout(st));
+                st.setTimeoutEvent(new IdRequest.Timeout(st));
                 
                 currentRequests.put(st.getTimeoutEvent().getTimeoutId(), entry);
                 trigger(st, timerPort);
@@ -616,9 +608,9 @@ public final class Search extends ComponentDefinition {
         }
     };
     
-    Handler<IdResponse> handleIdResponse = new Handler<IdResponse>() {
+    Handler<IdRequest.Response> handleIdResponse = new Handler<IdRequest.Response>() {
         @Override
-        public void handle(IdResponse e) {
+        public void handle(IdRequest.Response e) {
             
             int idEntry = e.getEntryId();
             String entry = e.getEntry();
@@ -646,9 +638,9 @@ public final class Search extends ComponentDefinition {
         }
     };
     
-    Handler<IdRequestTimeout> handleIdRequestTimeout = new Handler<IdRequestTimeout>() {
+    Handler<IdRequest.Timeout> handleIdRequestTimeout = new Handler<IdRequest.Timeout>() {
         @Override
-        public void handle(IdRequestTimeout e) {
+        public void handle(IdRequest.Timeout e) {
             String entry = currentRequests.remove(e.getTimeoutId());
             
             addingEntryQueue.add(entry);
@@ -656,9 +648,9 @@ public final class Search extends ComponentDefinition {
         }
     };
     
-    Handler<IdRequest> handleIdRequest = new Handler<IdRequest>() {
+    Handler<IdRequest.Request> handleIdRequest = new Handler<IdRequest.Request>() {
         @Override
-        public void handle(IdRequest e) {
+        public void handle(IdRequest.Request e) {
             // If I'm not able to handle id requests, drop the message
             if (!leaderReady) {
                 logger.debug(self.getId()+" : received id request, but I don't feel ready");
@@ -676,7 +668,7 @@ public final class Search extends ComponentDefinition {
                 java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
             }
             
-            trigger(new IdResponse(self, e.getSource(), entryId, entry), networkPort);
+            trigger(new IdRequest.Response(self, e.getSource(), entryId, entry), networkPort);
         }
     };
     
