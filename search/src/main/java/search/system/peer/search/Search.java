@@ -347,7 +347,7 @@ public final class Search extends ComponentDefinition {
                 }
                 
                 // Add all entries > maxIndexEntry as a range of interest.
-                res.add(new Range(maxIndexEntry + 1, Integer.MAX_VALUE));
+                res.add(new Range(startRange, Integer.MAX_VALUE));
             }
         } catch (IOException ex) {
             java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
