@@ -63,6 +63,9 @@ import search.system.peer.leader.LeaderElectionNotify;
 import search.system.peer.leader.LeaderElectionPort;
 import search.system.peer.leader.LeaderRequest;
 import search.system.peer.leader.LeaderResponse;
+import search.system.peer.search.EntryRequest.Request;
+import search.system.peer.search.EntryRequest.Response;
+import search.system.peer.search.EntryRequest.Timeout;
 import tman.system.peer.tman.TManSample;
 import tman.system.peer.tman.TManSamplePort;
 
@@ -99,6 +102,10 @@ public final class Search extends ComponentDefinition {
     int lastMissingIndexEntry = 1;
     int maxIndexEntry = 0;
     Random random;
+    
+    WebRequest currentRequest = null;
+    List<SearchResult> currentResearchResults = new ArrayList<SearchResult>();
+    
     Queue<String> addingEntryQueue = new LinkedList<String>();
     TreeMap<UUID, String> currentRequests = new TreeMap<UUID, String> ();
     boolean leaderReady = false;
@@ -138,6 +145,9 @@ public final class Search extends ComponentDefinition {
         subscribe(handleMaxIdTimeout, timerPort);
         subscribe(handleLeaderElectionNotify, leaderElectionPort);
         subscribe(handleLeaderResponse, leaderElectionPort);
+        subscribe(handleEntryRequest, networkPort);
+        subscribe(handleEntryResponse, networkPort);
+        subscribe(handleEntryTimeout, timerPort);
     }
 //-------------------------------------------------------------------	
     Handler<SearchInit> handleInit = new Handler<SearchInit>() {
@@ -147,8 +157,9 @@ public final class Search extends ComponentDefinition {
             searchConfiguration = init.getConfiguration();
             routingTable = new HashMap<Integer, List<PeerDescriptor>>(searchConfiguration.getNumPartitions());
             
-            for (int partition=0; partition < searchConfiguration.getNumPartitions(); partition++)
+            for (int partition=0; partition < searchConfiguration.getNumPartitions(); partition++) {
                 routingTable.put(partition, new ArrayList<PeerDescriptor>());
+            }
             
             random = new Random(init.getConfiguration().getSeed());
             long period = searchConfiguration.getPeriod();
@@ -183,18 +194,20 @@ public final class Search extends ComponentDefinition {
             logger.debug(event.getRequest().toString());
             WebResponse response;
             if (args[0].compareToIgnoreCase("search") == 0) {
-                response = new WebResponse(searchPageHtml(args[1]), event, 1, 1);
+                currentRequest = event;
+                requestEntries(args[1]);
             } else if (args[0].compareToIgnoreCase("add") == 0) {
                 response = new WebResponse(addEntryHtml(args[1], Integer.parseInt(args[2])), event, 1, 1);
+                trigger(response, webPort);
             } else {
-                response = new WebResponse(searchPageHtml(event
-                        .getTarget()), event, 1, 1);
+                currentRequest = event;
+                requestEntries(event.getTarget());
             }
-            trigger(response, webPort);
+            
         }
     };
 
-    private String searchPageHtml(String title) {
+    private String searchPageHtml(List<SearchResult> results) {
         StringBuilder sb = new StringBuilder("<!DOCTYPE html PUBLIC \"-//W3C");
         sb.append("//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR");
         sb.append("/xhtml1/DTD/xhtml1-transitional.dtd\"><html xmlns=\"http:");
@@ -205,15 +218,15 @@ public final class Search extends ComponentDefinition {
         sb.append("Arial, Helvetica, sans-serif; color: #0099FF;}--></style>");
         sb.append("</head><body><h2 align=\"center\" class=\"style2\">");
         sb.append("ID2210 (Decentralized Search for Piratebay)</h2><br>");
-        try {
-            query(sb, title);
-        } catch (ParseException ex) {
-            java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
-            sb.append(ex.getMessage());
-        } catch (IOException ex) {
-            java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
-            sb.append(ex.getMessage());
+        
+        sb.append("Found ").append(results.size()).append(" entries.<ul>");
+        int i = 1;
+        for (SearchResult d : results) {
+            sb.append("<li>").append(i).append(". ").append(d.getId()).append("\t").append(d.getTitle()).append("</li>");
+            i++;
         }
+        sb.append("</ul>");
+
         sb.append("</body></html>");
         return sb.toString();
     }
@@ -255,14 +268,13 @@ public final class Search extends ComponentDefinition {
             Snapshot.incNumIndexEntries(self);
         }
         else {
-            logger.info("Already known value rejected (id: "+id+")");
+            logger.debug("Already known value rejected (id: "+id+")");
         }
     }
-
-    private String query(StringBuilder sb, String querystr) throws ParseException, IOException {
-
+    
+    List<SearchResult> localSearch(String queryStr, int maxHits) throws IOException, ParseException {
         // the "title" arg specifies the default field to use when no field is explicitly specified in the query.
-        Query q = new QueryParser(Version.LUCENE_42, "title", analyzer).parse(querystr);
+        Query q = new QueryParser(Version.LUCENE_42, "title", analyzer).parse(queryStr);
         IndexSearcher searcher = null;
         IndexReader reader = null;
         try {
@@ -273,25 +285,95 @@ public final class Search extends ComponentDefinition {
             System.exit(-1);
         }
 
-        int hitsPerPage = 10;
-        TopScoreDocCollector collector = TopScoreDocCollector.create(hitsPerPage, true);
+        TopScoreDocCollector collector = TopScoreDocCollector.create(maxHits, true);
         searcher.search(q, collector);
         ScoreDoc[] hits = collector.topDocs().scoreDocs;
-
-        // display results
-        sb.append("Found ").append(hits.length).append(" entries.<ul>");
+        
+        int myPartition = self.getId() % searchConfiguration.getNumPartitions();
+        List<SearchResult> result = new ArrayList<SearchResult>();
         for (int i = 0; i < hits.length; ++i) {
             int docId = hits[i].doc;
-            Document d = searcher.doc(docId);
-            sb.append("<li>").append(i + 1).append(". ").append(d.get("id")).append("\t").append(d.get("title")).append("</li>");
+            result.add(new SearchResult(myPartition, searcher.doc(docId), hits[i].score));
         }
-        sb.append("</ul>");
-
-        // reader can only be closed when there
-        // is no need to access the documents any more.
+        
         reader.close();
-        return sb.toString();
+        
+        return result;
     }
+    
+    void requestEntries(String queryString) {
+        currentResearchResults.clear();
+        logger.debug(self.getId() + " : request entry ["+queryString+"] ; I known "+routingTable.keySet().size()+" partitions.");
+        for (List<PeerDescriptor> nodeList : routingTable.values()) {
+            for (PeerDescriptor p : nodeList) {
+                trigger (new EntryRequest.Request(self, p.getAddress(), queryString), networkPort);
+            }
+        }
+        
+        ScheduleTimeout st = new ScheduleTimeout(2000);
+        st.setTimeoutEvent(new EntryRequest.Timeout(st));
+        trigger(st, timerPort);
+    }
+    
+    Handler<EntryRequest.Request> handleEntryRequest = new Handler<EntryRequest.Request>() {
+        @Override
+        public void handle(Request e) {
+            int myPartition = self.getId() % searchConfiguration.getNumPartitions();
+            logger.debug(self.getId() + " : [partition "+myPartition+"] received request for query "+e.getQuery());
+            
+            try {
+                List<SearchResult> localResult = localSearch(e.getQuery(), 10);
+                trigger (new EntryRequest.Response(self, e.getSource(), localResult), networkPort);
+            } catch (IOException ex) {
+                java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
+            } catch (ParseException ex) {
+                java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+    };
+    
+    Handler<EntryRequest.Response> handleEntryResponse = new Handler<EntryRequest.Response>() {
+        @Override
+        public void handle(Response e) {
+            List<SearchResult> newResults = e.getHits();
+            
+            
+                logger.debug(self.getId()+" : merging " + newResults.size()+" results");
+                
+            // Merge old and new results.
+            // Results are considered equal if they have the same id and partition number.
+            for(SearchResult r : newResults) {
+                boolean notInList = true;
+                for (SearchResult cr : currentResearchResults) {
+                    if (r.getId().compareTo(cr.getId()) == 0 && r.getPartition() == cr.getPartition()) {
+                        notInList = false;
+                    }    
+                }
+                
+                if (notInList) {
+                    currentResearchResults.add(r);
+                }
+            }
+            logger.debug(self.getId()+" : currently "+currentResearchResults.size()+" results");
+        }
+    };
+    
+    Handler<EntryRequest.Timeout> handleEntryTimeout = new Handler<EntryRequest.Timeout>() {
+        @Override
+        public void handle(Timeout e) {
+            logger.debug(self.getId()+" : research timeout ["+currentResearchResults.size()+" results]");
+            Collections.sort(currentResearchResults, new SearchResult.ComparatorByScore());
+            
+            if (currentResearchResults.size() > 10) {
+                currentResearchResults = currentResearchResults.subList(0, 10);
+            }
+            
+            trigger (new WebResponse(searchPageHtml(currentResearchResults), currentRequest, 1, 1), webPort);
+            
+            currentRequest = null;
+            currentResearchResults.clear();
+        }
+    };
     
 //-------------------------------------------------------------------------------------------------------------------------------------
 //                                              Periodic index exchanges
@@ -307,6 +389,7 @@ public final class Search extends ComponentDefinition {
          
             List<Address> neigh = new ArrayList<Address>();
             Iterator<PeerDescriptor> it = routingTable.get(myPartition).iterator();
+            //TODO : parametrize /2
             while (it.hasNext() && neigh.size() < tmanSample.size() / 2)
                 neigh.add(it.next().getAddress());
             
