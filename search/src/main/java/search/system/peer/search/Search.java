@@ -305,7 +305,11 @@ public final class Search extends ComponentDefinition {
         currentResearchResults.clear();
         logger.debug(self.getId() + " : request entry ["+queryString+"] ; I known "+routingTable.keySet().size()+" partitions.");
         for (List<PeerDescriptor> nodeList : routingTable.values()) {
-            for (PeerDescriptor p : nodeList) {
+            List<PeerDescriptor> shortList = nodeList;
+            if (shortList.size() > 3) {
+                shortList = shortList.subList(0, 3);
+            }
+            for (PeerDescriptor p : shortList) {
                 trigger (new EntryRequest.Request(self, p.getAddress(), queryString), networkPort);
             }
         }
