@@ -270,7 +270,7 @@ public class LeaderElector extends ComponentDefinition{
                 // The leader is down
                 if (currentLeader == address)
                 {
-                    logger.debug(self.getId()+" : No answers from leader: " + currentLeader.getId());
+                    logger.info(self.getId()+" : No answers from leader: " + currentLeader.getId());
                     // To inform the other peers and avoid useless response with this leader
                     oldLeader = currentLeader;
                     currentLeader = null;
@@ -352,7 +352,7 @@ public class LeaderElector extends ComponentDefinition{
             if (!noLargerId && currentLeader == self) {
                 // Do not consider myself the leader any more
                 currentLeader = null;
-                logger.debug(self.getId()+" : "+bestNeighbour.getId()+" discovered as better node, so I abdicate.");
+                logger.info(self.getId()+" : I discover a better node ("+bestNeighbour.getId()+"), so I abdicate.");
                 trigger(new LeaderElectionNotify(self), leaderElectionPort);
             }
 
@@ -453,7 +453,7 @@ public class LeaderElector extends ComponentDefinition{
             // All peers have responded, I am the new leader
             if (expectedElectors.isEmpty())
             {
-                logger.debug(self.getId() + " : Election : I got elected !");
+                logger.info(self.getId() + " : Election : I got elected !");
 
                 Address previousLeader = currentLeader;
                 currentLeader = self;
@@ -491,7 +491,7 @@ public class LeaderElector extends ComponentDefinition{
             // If election hasn't been completed yet, then I am the new leader
             if (expectedElectors != null) 
             {
-                logger.debug(self.getId()+" : Election : Timeout -> I got elected");
+                logger.info(self.getId()+" : Election : Timeout -> I got elected");
                 
                 Address previousLeader = currentLeader;
                 currentLeader = self;
