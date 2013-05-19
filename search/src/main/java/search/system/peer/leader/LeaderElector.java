@@ -384,6 +384,9 @@ public class LeaderElector extends ComponentDefinition{
 //                 Leader election
 //------------------------------------------------------------------------------
    
+    /*
+     * Launch an election: ask my neighbors if they agree
+     */
     public void launchElection() {
         // Ask all tman neighbours if I can be the leader
         for (Address dest : tmanNeighbours) {
@@ -396,74 +399,106 @@ public class LeaderElector extends ComponentDefinition{
         trigger(rst, timerPort);
     }
 
+    /*
+     * A peer apply for leadership:
+     * Accept if it is the best peer I know
+     * Refuse with a best peer otherwise
+     */
     Handler<LeaderMsg.Apply> handleLeaderApply = new Handler<LeaderMsg.Apply>() {
         @Override
         public void handle(LeaderMsg.Apply e) {
             // The source of this message is applying for leadership
 
-            if (currentLeader != null && currentLeader.getId() > e.getSource().getId()) {
-                // check if leader is still up
+            // My current leader is a better peer
+            if (currentLeader != null && currentLeader.getId() > e.getSource().getId())
+            {
+                // Check if leader is still up
                 askInfos(currentLeader);
+                // And refuse for the moment
                 trigger(new LeaderMsg.Reject(self, e.getSource(), currentLeader), networkPort);
             }
-            else if (tmanNeighbours == null) {
+            else if (tmanNeighbours == null)
+            {
                 trigger(new LeaderMsg.Accept(self, e.getSource()), networkPort);
             }
-            else {
+            else
+            {
+                // Check if it is right
                 Address bestVote = getBestPeerFrom(tmanNeighbours, e.getSource());
 
-                if (bestVote == e.getSource()) {
+                if (bestVote == e.getSource())
                     trigger(new LeaderMsg.Accept(self, e.getSource()), networkPort);
-                }
-                else {
+                else
                     trigger(new LeaderMsg.Reject(self, e.getSource(), bestVote), networkPort);
-                }
             }
         }
     };
 
+    /*
+     * A peer has accepted our proposal, check if it is the last
+     */
     Handler<LeaderMsg.Accept> handleLeaderAccept = new Handler<LeaderMsg.Accept>() {
         @Override
         public void handle(Accept e) {
+            
+            // If the election has been aborted
+            if (expectedElectors == null)
+                return;
+            
+            logger.debug(self.getId() + " : election : received acceptance message from " + e.getSource().getId());
+
             // This elector has accepted the election, so don't expect anything from him any more.
-            if (expectedElectors != null) {
-                logger.debug(self.getId()+" : election : received acceptance message from "+e.getSource().getId());
-                expectedElectors.remove(e.getSource());
-                if (expectedElectors.isEmpty()) {
-                    // Signal your peer that he is the new leader (even though he didn't ask for it), and give him the lod leader as well.
-                    trigger(new LeaderElectionNotify(currentLeader), leaderElectionPort);
-                    
-                    currentLeader = self;
-                    expectedElectors = null;
-                    logger.debug(self.getId()+" : election : I got elected !");
-                    
-                    
-                }
+            expectedElectors.remove(e.getSource());
+
+            // All peers have responded, I am the new leader
+            if (expectedElectors.isEmpty())
+            {
+                logger.debug(self.getId() + " : Election : I got elected !");
+
+                Address previousLeader = currentLeader;
+                currentLeader = self;
+                expectedElectors = null;
+
+                // Signal your peer that he is the new leader (even though he didn't ask for it), and give him the old leader as well.
+                trigger(new LeaderElectionNotify(previousLeader), leaderElectionPort);
             }
         }
     };
 
+    /*
+     * A peer do not agree:
+     * A better peer exist or has existed and is still considered as alive by some peers
+     */
     Handler<LeaderMsg.Reject> handleLeaderReject = new Handler<LeaderMsg.Reject>() {
         @Override
         public void handle(Reject e) {
             // Someone rejected the election ! Abort.
             logger.debug(self.getId()+" : election : received rejection message from "+e.getSource().getId());
             expectedElectors = null;
-
+            
+            // Use the better peer to get some missing infos
             askInfos(e.getBetterPeer());
         }
     };
 
+    /*
+     * Check for the election status and decide
+     */
     Handler<ElectionTimeout> handleElectionTimeout = new Handler<ElectionTimeout>() {
         @Override
         public void handle(ElectionTimeout e) {
-            logger.debug(self.getId()+" : election : timeout");
-            // If election hasn't been completed yet...
-            if (expectedElectors != null) {
-                logger.debug(self.getId()+" : election : I got elected !");
-                // ... then I am the new leader
+            
+            // If election hasn't been completed yet, then I am the new leader
+            if (expectedElectors != null) 
+            {
+                logger.debug(self.getId()+" : Election : Timeout -> I got elected");
+                
+                Address previousLeader = currentLeader;
                 currentLeader = self;
                 expectedElectors = null;
+
+                // Signal your peer that he is the new leader (even though he didn't ask for it), and give him the old leader as well.
+                trigger(new LeaderElectionNotify(previousLeader), leaderElectionPort);
             }
         }
     };
