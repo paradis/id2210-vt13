@@ -67,7 +67,13 @@ import tman.system.peer.tman.TManSample;
 import tman.system.peer.tman.TManSamplePort;
 
 /**
- * Should have some comments here.
+ * The Search class will handle :
+ * the web interface,
+ * adding entries (to the correct partition),
+ * exchanging entries,
+ * being the leader.
+ * 
+ * However, electing and finding the leader will be done by the LeaderElector component.
  *
  * @author jdowling
  */
@@ -100,6 +106,8 @@ public final class Search extends ComponentDefinition {
     // When you partition the index you need to find new nodes
     // This is a routing table maintaining a list of pairs in each partition.
     private Map<Integer, List<PeerDescriptor>> routingTable;
+    
+    // Comparator used by the routing system to eject older nodes
     Comparator<PeerDescriptor> peerAgeComparator = new Comparator<PeerDescriptor>() {
         @Override
         public int compare(PeerDescriptor t, PeerDescriptor t1) {
@@ -161,6 +169,10 @@ public final class Search extends ComponentDefinition {
 
         }
     };
+    
+//-------------------------------------------------------------------------------------------------------------------------------------
+//                                              Web interface
+//-------------------------------------------------------------------------------------------------------------------------------------
     Handler<WebRequest> handleWebRequest = new Handler<WebRequest>() {
         @Override
         public void handle(WebRequest event) {
@@ -280,6 +292,10 @@ public final class Search extends ComponentDefinition {
         reader.close();
         return sb.toString();
     }
+    
+//-------------------------------------------------------------------------------------------------------------------------------------
+//                                              Periodic index exchanges
+//-------------------------------------------------------------------------------------------------------------------------------------
     Handler<UpdateIndexTimeout> handleUpdateIndexTimeout = new Handler<UpdateIndexTimeout>() {
         @Override
         public void handle(UpdateIndexTimeout event) {
@@ -324,6 +340,7 @@ public final class Search extends ComponentDefinition {
         return topDocs.scoreDocs;
     }
     
+    // Returns true if this peer already has entry n° id
     boolean isAlreadyKnown(int id) throws IOException {
         IndexReader reader = DirectoryReader.open(index);
         IndexSearcher searcher = new IndexSearcher(reader);
@@ -425,8 +442,7 @@ public final class Search extends ComponentDefinition {
         IndexSearcher searcher = null;
         IndexReader reader = null;
         try {
-            ScoreDoc[] hits = getExistingDocsInRange(max, maxIndexEntry,
-                    reader, searcher);
+            ScoreDoc[] hits = getExistingDocsInRange(max, maxIndexEntry, reader, searcher);
 
             if (hits != null) {
                 for (int i = 0; i < hits.length; ++i) {
@@ -458,6 +474,7 @@ public final class Search extends ComponentDefinition {
         }
         return res;
     }
+    
     Handler<MissingIndexEntries.Request> handleMissingIndexEntriesRequest = new Handler<MissingIndexEntries.Request>() {
         @Override
         public void handle(MissingIndexEntries.Request event) {
@@ -470,6 +487,7 @@ public final class Search extends ComponentDefinition {
             trigger(new MissingIndexEntries.Response(self, event.getSource(), res), networkPort);
         }
     };
+    
     Handler<MissingIndexEntries.Response> handleMissingIndexEntriesResponse = new Handler<MissingIndexEntries.Response>() {
         @Override
         public void handle(MissingIndexEntries.Response event) {
@@ -488,6 +506,7 @@ public final class Search extends ComponentDefinition {
             }
         }
     };
+    
     Handler<CyclonSample> handleCyclonSample = new Handler<CyclonSample>() {
         @Override
         public void handle(CyclonSample event) {
@@ -522,13 +541,8 @@ public final class Search extends ComponentDefinition {
             logger.debug(self.getId()+" : requested leader for entry "+event.getText());
         }
     };
-    Handler<TManSample> handleTManSample = new Handler<TManSample>() {
-        @Override
-        public void handle(TManSample event) {
-            tmanSample = event.getSample();
-            trigger(event, leaderElectionPort);
-        }
-    };
+    
+    
 
     private void updateIndexPointers(int id) {
         if (id == lastMissingIndexEntry) {
@@ -545,9 +559,31 @@ public final class Search extends ComponentDefinition {
         return Integer.parseInt(d.get("id"));
     }
     
+    
+//-------------------------------------------------------------------------------------------------------------------------------------
+//                                              TMan samples
+//-------------------------------------------------------------------------------------------------------------------------------------
+    Handler<TManSample> handleTManSample = new Handler<TManSample>() {
+        @Override
+        public void handle(TManSample event) {
+            // Retrieve sample, and forward it to LeaderElection component as well
+            tmanSample = event.getSample();
+            trigger(event, leaderElectionPort);
+        }
+    };
+    
+//-------------------------------------------------------------------------------------------------------------------------------------
+//                                              Election and abdication management
+//-------------------------------------------------------------------------------------------------------------------------------------
     Handler<LeaderElectionNotify> handleLeaderElectionNotify = new Handler<LeaderElectionNotify>() {
         @Override
         public void handle(LeaderElectionNotify e) {
+            // Two cases here :
+            // -either getOldLeader() == self, in which case it means we just abdicated
+            // -or getOldLeader() != self, in which case we are actually the new leader
+            // However, in the second case, we won't consider ourself leader until we
+            // received a response from the old leader (or our request timeouted).
+            
             leaderReady = false;
             logger.debug(self.getId()+" : received election notification");
             
@@ -587,6 +623,9 @@ public final class Search extends ComponentDefinition {
         }
     };
     
+//-------------------------------------------------------------------------------------------------------------------------------------
+//                                              Finding the current leader
+//-------------------------------------------------------------------------------------------------------------------------------------
     Handler<LeaderResponse> handleLeaderResponse = new Handler<LeaderResponse>() {
         @Override
         public void handle(LeaderResponse e) {
@@ -613,6 +652,33 @@ public final class Search extends ComponentDefinition {
         }
     };
     
+//-------------------------------------------------------------------------------------------------------------------------------------
+//                                              Getting an id from the leader
+//-------------------------------------------------------------------------------------------------------------------------------------
+    Handler<IdRequest.Request> handleIdRequest = new Handler<IdRequest.Request>() {
+        @Override
+        public void handle(IdRequest.Request e) {
+            // If I'm not able to handle id requests, drop the message
+            if (!leaderReady) {
+                logger.debug(self.getId()+" : received id request, but I don't feel ready or am not the leader");
+                return;
+            }
+            
+            String entry = e.getEntry();
+            int entryId = ++maxIndexEntry;
+            
+            logger.debug(self.getId()+" : received id request for entry: " + entry + ", id: "+ entryId);
+            
+            try {
+                addEntry(entry, entryId);
+            } catch (IOException ex) {
+                java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
+            }
+            
+            trigger(new IdRequest.Response(self, e.getSource(), entryId, entry), networkPort);
+        }
+    };
+    
     Handler<IdRequest.Response> handleIdResponse = new Handler<IdRequest.Response>() {
         @Override
         public void handle(IdRequest.Response e) {
@@ -622,7 +688,7 @@ public final class Search extends ComponentDefinition {
             
             logger.debug(self.getId() + " : received id response [" + idEntry + ", " + entry + "]");
             
-            UUID timeout = getKeyFromValue(currentRequests, entry);
+            UUID timeout = getTimeoutIDFromValue(currentRequests, entry);
             if (timeout == null)
             {
                 logger.error(self.getId() + " : Invalid entry: " + entry);
@@ -653,31 +719,7 @@ public final class Search extends ComponentDefinition {
         }
     };
     
-    Handler<IdRequest.Request> handleIdRequest = new Handler<IdRequest.Request>() {
-        @Override
-        public void handle(IdRequest.Request e) {
-            // If I'm not able to handle id requests, drop the message
-            if (!leaderReady) {
-                logger.debug(self.getId()+" : received id request, but I don't feel ready");
-                return;
-            }
-            
-            String entry = e.getEntry();
-            int entryId = ++maxIndexEntry;
-            
-            logger.debug(self.getId()+" : received id request for entry: " + entry + ", id: "+ entryId);
-            
-            try {
-                addEntry(entry, entryId);
-            } catch (IOException ex) {
-                java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
-            }
-            
-            trigger(new IdRequest.Response(self, e.getSource(), entryId, entry), networkPort);
-        }
-    };
-    
-    UUID getKeyFromValue(Map<UUID, String> map, String value) {
+    UUID getTimeoutIDFromValue(Map<UUID, String> map, String value) {
         for (UUID a : map.keySet()) {
             if (map.get(a).equals(value)) {
                 return a;
