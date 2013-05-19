@@ -103,6 +103,7 @@ public final class Search extends ComponentDefinition {
     int maxIndexEntry = 0;
     Random random;
     
+    // TODO : handle multiple simultaneous researches on the same node
     WebRequest currentRequest = null;
     List<SearchResult> currentResearchResults = new ArrayList<SearchResult>();
     
@@ -306,6 +307,8 @@ public final class Search extends ComponentDefinition {
         logger.debug(self.getId() + " : request entry ["+queryString+"] ; I known "+routingTable.keySet().size()+" partitions.");
         for (List<PeerDescriptor> nodeList : routingTable.values()) {
             List<PeerDescriptor> shortList = nodeList;
+            
+            // IMPROVEMENT TODO : make that 3 a parameter of the component
             if (shortList.size() > 3) {
                 shortList = shortList.subList(0, 3);
             }
@@ -602,6 +605,7 @@ public final class Search extends ComponentDefinition {
             neighbours.addAll(event.getSample());
 
             // update routing tables
+            // TODO : remove duplicates
             for (Address p : neighbours) {
                 int partition = p.getId() % searchConfiguration.getNumPartitions();
                 List<PeerDescriptor> nodes = routingTable.get(partition);
