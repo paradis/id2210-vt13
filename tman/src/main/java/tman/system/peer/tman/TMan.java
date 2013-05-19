@@ -284,7 +284,7 @@ public final class TMan extends ComponentDefinition {
      * Merge a list of peer descriptor with a peer descriptor:
      * We keep the freshest if there are duplicate
      */
-    private List<PeerDescriptor> merge(List<PeerDescriptor> list, PeerDescriptor descriptor) {
+    public static List<PeerDescriptor> merge(List<PeerDescriptor> list, PeerDescriptor descriptor) {
         ListIterator<PeerDescriptor> i = list.listIterator();
         while (i.hasNext()) {
             PeerDescriptor d = i.next();
@@ -303,7 +303,7 @@ public final class TMan extends ComponentDefinition {
     /*
      * Merge two lists of peers descriptors
      */
-    private List<PeerDescriptor> merge(List<PeerDescriptor> buffer, List<PeerDescriptor> descriptors) {
+    public static List<PeerDescriptor> merge(List<PeerDescriptor> buffer, List<PeerDescriptor> descriptors) {
         for (PeerDescriptor d : descriptors)
             merge(buffer, d);
         

@@ -66,6 +66,7 @@ import search.system.peer.leader.LeaderResponse;
 import search.system.peer.search.EntryRequest.Request;
 import search.system.peer.search.EntryRequest.Response;
 import search.system.peer.search.EntryRequest.Timeout;
+import tman.system.peer.tman.TMan;
 import tman.system.peer.tman.TManSample;
 import tman.system.peer.tman.TManSamplePort;
 
@@ -611,15 +612,12 @@ public final class Search extends ComponentDefinition {
                 int partition = p.getId() % searchConfiguration.getNumPartitions();
                 List<PeerDescriptor> nodes = routingTable.get(partition);
 
-                // Note - this might replace an existing entry in Lucene
-                nodes.add(new PeerDescriptor(p));
+                TMan.merge(nodes, new PeerDescriptor(p));
+                
                 // keep the freshest descriptors in this partition
                 Collections.sort(nodes, peerAgeComparator);
-                List<PeerDescriptor> nodesToRemove = new ArrayList<PeerDescriptor>();
-                for (int i = nodes.size(); i > searchConfiguration.getMaxNumRoutingEntries(); i--) {
-                    nodesToRemove.add(nodes.get(i - 1));
-                }
-                nodes.removeAll(nodesToRemove);
+                while(nodes.size() > searchConfiguration.getMaxNumRoutingEntries())
+                    nodes.remove(searchConfiguration.getMaxNumRoutingEntries());
             }
         }
     };
