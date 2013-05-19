@@ -5,6 +5,7 @@
 package search.system.peer.leader;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -475,16 +476,12 @@ public class LeaderElector extends ComponentDefinition{
             return other;
         
         ArrayList<Address> myPeers = new ArrayList<Address>(peers);
-        myPeers.add(other);
         
-        Address best = myPeers.get(0);
-        for (Address a : myPeers) {
-            if (a.getId() > best.getId()) {
-                best = a;
-            }
-        }
-        
-        return best;
+        if (other != null)
+            myPeers.add(other);
+               
+        // Max id
+        return Collections.min(myPeers, new ComparatorAddressById());
     }
 
     // For debug purposes
