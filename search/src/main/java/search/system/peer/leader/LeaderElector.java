@@ -38,7 +38,7 @@ import tman.system.peer.tman.TManSample;
 public class LeaderElector extends ComponentDefinition{
     private static final Logger logger = LoggerFactory.getLogger(LeaderElector.class);
 
-    //TODO : put all that in a configuration class
+    //Improvement : put all that in a configuration class
     private static final int config_timeout_election = 10000;
     private static final int config_timeout_info = 2000;
     private static final int config_max_requests = 3;
@@ -400,7 +400,7 @@ public class LeaderElector extends ComponentDefinition{
     }
 
     /*
-     * A peer apply for leadership:
+     * A peer applies for leadership:
      * Accept if it is the best peer I know
      * Refuse with a best peer otherwise
      */
@@ -459,15 +459,15 @@ public class LeaderElector extends ComponentDefinition{
                 currentLeader = self;
                 expectedElectors = null;
 
-                // Signal your peer that he is the new leader (even though he didn't ask for it), and give him the old leader as well.
+                // Signal your Search component that he is the new leader (even though he didn't ask for it), and give him the old leader as well.
                 trigger(new LeaderElectionNotify(previousLeader), leaderElectionPort);
             }
         }
     };
 
     /*
-     * A peer do not agree:
-     * A better peer exist or has existed and is still considered as alive by some peers
+     * A neighbour does not agree:
+     * A better peer exists or has existed and is still considered as alive by some peers
      */
     Handler<LeaderMsg.Reject> handleLeaderReject = new Handler<LeaderMsg.Reject>() {
         @Override
@@ -482,7 +482,7 @@ public class LeaderElector extends ComponentDefinition{
     };
 
     /*
-     * Check for the election status and decide
+     * Election timeout : check for the election status and decide
      */
     Handler<ElectionTimeout> handleElectionTimeout = new Handler<ElectionTimeout>() {
         @Override
@@ -497,7 +497,7 @@ public class LeaderElector extends ComponentDefinition{
                 currentLeader = self;
                 expectedElectors = null;
 
-                // Signal your peer that he is the new leader (even though he didn't ask for it), and give him the old leader as well.
+                // Signal your Search component that he is the new leader (even though he didn't ask for it), and give him the old leader as well.
                 trigger(new LeaderElectionNotify(previousLeader), leaderElectionPort);
             }
         }
@@ -529,6 +529,9 @@ public class LeaderElector extends ComponentDefinition{
         return str + "]";
     }
 
+    /*
+     * Return address of the request that corresponds to a give tiemout UUID.
+     */
     Address getKeyFromValue(UUID value) {
         for (Address a : currentRequests.keySet()) {
             if (currentRequests.get(a) == value) {

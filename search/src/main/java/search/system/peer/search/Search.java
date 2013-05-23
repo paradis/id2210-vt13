@@ -104,6 +104,7 @@ public final class Search extends ComponentDefinition {
     int maxIndexEntry = 0;
     Random random;
     
+    // TODO : handle multiple simultaneous researches on the same node
     WebRequest currentRequest = null;
     List<SearchResult> currentResearchResults = new ArrayList<SearchResult>();
     
@@ -258,7 +259,6 @@ public final class Search extends ComponentDefinition {
             updateIndexPointers(id);
             IndexWriter w = new IndexWriter(index, config);
             Document doc = new Document();
-            //TODO: value cannot be null
             doc.add(new TextField("title", title, Field.Store.YES));
             // Use a NumericRangeQuery to find missing index entries:
             // http://lucene.apache.org/core/4_2_0/core/org/apache/lucene/search/NumericRangeQuery.html
@@ -307,6 +307,7 @@ public final class Search extends ComponentDefinition {
         logger.debug(self.getId() + " : request entry ["+queryString+"] ; I known "+routingTable.keySet().size()+" partitions.");
         for (List<PeerDescriptor> nodeList : routingTable.values()) {
             List<PeerDescriptor> shortList = nodeList;
+            
             if (shortList.size() > 3) {
                 shortList = shortList.subList(0, 3);
             }
