@@ -92,29 +92,39 @@ public final class Search extends ComponentDefinition {
     Positive<TManSamplePort> tmanPort = positive(TManSamplePort.class);
     Positive<LeaderElectionPort> leaderElectionPort = positive(LeaderElectionPort.class);
     
-    ArrayList<Address> neighbours = new ArrayList<Address>();
-    List<Address> tmanSample = new ArrayList<Address>();
+    ArrayList<Address> neighbours = new ArrayList<Address>();   // Filled by Cyclon
+    List<Address> tmanSample = new ArrayList<Address>();        // Filled by TMan
+    
     private Address self;
     private SearchConfiguration searchConfiguration;
+    Random random;
+    
     // Apache Lucene used for searching
     StandardAnalyzer analyzer = new StandardAnalyzer(Version.LUCENE_42);
     Directory index = new RAMDirectory();
     IndexWriterConfig config = new IndexWriterConfig(Version.LUCENE_42, analyzer);
+    
     int lastMissingIndexEntry = 1;
     int maxIndexEntry = 0;
-    Random random;
     
-    // TODO : handle multiple simultaneous researches on the same node
-    WebRequest currentRequest = null;
+    // currentSearchRequest is the search request we are currently handling ;
+    // currentResearchResults is the results received so far.
+    WebRequest currentSearchRequest = null;
     List<SearchResult> currentResearchResults = new ArrayList<SearchResult>();
     
+    // Queue for pending adds for which the component is still waiting for a leader.
     Queue<String> addingEntryQueue = new LinkedList<String>();
-    TreeMap<UUID, String> currentRequests = new TreeMap<UUID, String> ();
+    // List of id requests to the leader for which the node is still expecting a response.
+    TreeMap<UUID, String> currentAddRequests = new TreeMap<UUID, String> ();
+    
+    // true if this component considers itself a leader AND has had time to prepare itself
+    // (i.e. collect previous IDs).
     boolean leaderReady = false;
     
     // When you partition the index you need to find new nodes
     // This is a routing table maintaining a list of pairs in each partition.
     private Map<Integer, List<PeerDescriptor>> routingTable;
+    
     
     // Comparator used by the routing system to eject older nodes
     Comparator<PeerDescriptor> peerAgeComparator = new Comparator<PeerDescriptor>() {
@@ -182,78 +192,48 @@ public final class Search extends ComponentDefinition {
         }
     };
     
+
+
+    
 //-------------------------------------------------------------------------------------------------------------------------------------
-//                                              Web interface
+//                                              Peer samples
 //-------------------------------------------------------------------------------------------------------------------------------------
-    Handler<WebRequest> handleWebRequest = new Handler<WebRequest>() {
+    Handler<TManSample> handleTManSample = new Handler<TManSample>() {
         @Override
-        public void handle(WebRequest event) {
-
-            String[] args = event.getTarget().split("-");
-
-            logger.debug("Handling Webpage Request");
-            logger.debug(event.getRequest().toString());
-            WebResponse response;
-            if (args[0].compareToIgnoreCase("search") == 0) {
-                currentRequest = event;
-                requestEntries(args[1]);
-            } else if (args[0].compareToIgnoreCase("add") == 0) {
-                response = new WebResponse(addEntryHtml(args[1], Integer.parseInt(args[2])), event, 1, 1);
-                trigger(response, webPort);
-            } else {
-                currentRequest = event;
-                requestEntries(event.getTarget());
-            }
-            
+        public void handle(TManSample event) {
+            // Retrieve sample, and forward it to LeaderElection component as well
+            tmanSample = event.getSample();
+            trigger(event, leaderElectionPort);
         }
     };
+    
+    Handler<CyclonSample> handleCyclonSample = new Handler<CyclonSample>() {
+        @Override
+        public void handle(CyclonSample event) {
+            // receive a new list of neighbours
+            neighbours.clear();
+            neighbours.addAll(event.getSample());
 
-    private String searchPageHtml(List<SearchResult> results) {
-        StringBuilder sb = new StringBuilder("<!DOCTYPE html PUBLIC \"-//W3C");
-        sb.append("//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR");
-        sb.append("/xhtml1/DTD/xhtml1-transitional.dtd\"><html xmlns=\"http:");
-        sb.append("//www.w3.org/1999/xhtml\"><head><meta http-equiv=\"Conten");
-        sb.append("t-Type\" content=\"text/html; charset=utf-8\" />");
-        sb.append("<title>Kompics P2P Bootstrap Server</title>");
-        sb.append("<style type=\"text/css\"><!--.style2 {font-family: ");
-        sb.append("Arial, Helvetica, sans-serif; color: #0099FF;}--></style>");
-        sb.append("</head><body><h2 align=\"center\" class=\"style2\">");
-        sb.append("ID2210 (Decentralized Search for Piratebay)</h2><br>");
-        
-        sb.append("Found ").append(results.size()).append(" entries.<ul>");
-        int i = 1;
-        for (SearchResult d : results) {
-            sb.append("<li>").append(i).append(". ").append(d.getId()).append("\t").append(d.getTitle()).append("</li>");
-            i++;
+            // update routing tables
+            for (Address p : neighbours) {
+                int partition = p.getId() % searchConfiguration.getNumPartitions();
+                List<PeerDescriptor> nodes = routingTable.get(partition);
+
+                TMan.merge(nodes, new PeerDescriptor(p));
+                
+                // keep the freshest descriptors in this partition
+                Collections.sort(nodes, peerAgeComparator);
+                while(nodes.size() > searchConfiguration.getMaxNumRoutingEntries())
+                    nodes.remove(searchConfiguration.getMaxNumRoutingEntries());
+            }
         }
-        sb.append("</ul>");
-
-        sb.append("</body></html>");
-        return sb.toString();
-    }
-
-    private String addEntryHtml(String title, int id) {
-        StringBuilder sb = new StringBuilder("<!DOCTYPE html PUBLIC \"-//W3C");
-        sb.append("//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR");
-        sb.append("/xhtml1/DTD/xhtml1-transitional.dtd\"><html xmlns=\"http:");
-        sb.append("//www.w3.org/1999/xhtml\"><head><meta http-equiv=\"Conten");
-        sb.append("t-Type\" content=\"text/html; charset=utf-8\" />");
-        sb.append("<title>Adding an Entry</title>");
-        sb.append("<style type=\"text/css\"><!--.style2 {font-family: ");
-        sb.append("Arial, Helvetica, sans-serif; color: #0099FF;}--></style>");
-        sb.append("</head><body><h2 align=\"center\" class=\"style2\">");
-        sb.append("ID2210 Uploaded Entry</h2><br>");
-        try {
-            addEntry(title, id);
-            sb.append("Entry: ").append(title).append(" - ").append(id);
-        } catch (IOException ex) {
-            sb.append(ex.getMessage());
-            java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
-        }
-        sb.append("</body></html>");
-        return sb.toString();
-    }
-
+    };
+    
+    
+    
+//-------------------------------------------------------------------------------------------------------------------------------------
+//                                              Add entry to Lucene doc
+//-------------------------------------------------------------------------------------------------------------------------------------
     private void addEntry(String title, int id) throws IOException {
         if (!isAlreadyKnown(id)) {
             updateIndexPointers(id);
@@ -273,113 +253,25 @@ public final class Search extends ComponentDefinition {
         }
     }
     
-    List<SearchResult> localSearch(String queryStr, int maxHits) throws IOException, ParseException {
-        // the "title" arg specifies the default field to use when no field is explicitly specified in the query.
-        Query q = new QueryParser(Version.LUCENE_42, "title", analyzer).parse(queryStr);
-        IndexSearcher searcher = null;
-        IndexReader reader = null;
-        try {
-            reader = DirectoryReader.open(index);
-            searcher = new IndexSearcher(reader);
-        } catch (IOException ex) {
-            java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
-            System.exit(-1);
-        }
+    // Returns true if this peer already has entry n° id
+    boolean isAlreadyKnown(int id) throws IOException {
+        IndexReader reader = DirectoryReader.open(index);
+        IndexSearcher searcher = new IndexSearcher(reader);
 
-        TopScoreDocCollector collector = TopScoreDocCollector.create(maxHits, true);
-        searcher.search(q, collector);
-        ScoreDoc[] hits = collector.topDocs().scoreDocs;
-        
-        int myPartition = self.getId() % searchConfiguration.getNumPartitions();
-        List<SearchResult> result = new ArrayList<SearchResult>();
-        for (int i = 0; i < hits.length; ++i) {
-            int docId = hits[i].doc;
-            result.add(new SearchResult(myPartition, searcher.doc(docId), hits[i].score));
-        }
-        
-        reader.close();
-        
-        return result;
+        ScoreDoc[] hits = getExistingDocsInRange(id, id, reader, searcher);
+        return hits != null && hits.length > 0;
     }
     
-    void requestEntries(String queryString) {
-        currentResearchResults.clear();
-        logger.debug(self.getId() + " : request entry ["+queryString+"] ; I known "+routingTable.keySet().size()+" partitions.");
-        for (List<PeerDescriptor> nodeList : routingTable.values()) {
-            List<PeerDescriptor> shortList = nodeList;
-            
-            if (shortList.size() > 3) {
-                shortList = shortList.subList(0, 3);
-            }
-            for (PeerDescriptor p : shortList) {
-                trigger (new EntryRequest.Request(self, p.getAddress(), queryString), networkPort);
-            }
+    private void updateIndexPointers(int id) {
+        if (id == lastMissingIndexEntry) {
+            lastMissingIndexEntry++;
         }
-        
-        ScheduleTimeout st = new ScheduleTimeout(searchConfiguration.getLookupTimeout());
-        st.setTimeoutEvent(new EntryRequest.Timeout(st));
-        trigger(st, timerPort);
+        if (id > maxIndexEntry) {
+            maxIndexEntry = id;
+        }
     }
     
-    Handler<EntryRequest.Request> handleEntryRequest = new Handler<EntryRequest.Request>() {
-        @Override
-        public void handle(Request e) {
-            int myPartition = self.getId() % searchConfiguration.getNumPartitions();
-            logger.debug(self.getId() + " : [partition "+myPartition+"] received request for query "+e.getQuery());
-            
-            try {
-                List<SearchResult> localResult = localSearch(e.getQuery(), 10);
-                trigger (new EntryRequest.Response(self, e.getSource(), localResult), networkPort);
-            } catch (IOException ex) {
-                java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
-            } catch (ParseException ex) {
-                java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
-            }
-        }
-    };
-    
-    Handler<EntryRequest.Response> handleEntryResponse = new Handler<EntryRequest.Response>() {
-        @Override
-        public void handle(Response e) {
-            List<SearchResult> newResults = e.getHits();
-            
-            
-                logger.debug(self.getId()+" : merging " + newResults.size()+" results");
-                
-            // Merge old and new results.
-            // Results are considered equal if they have the same id and partition number.
-            for(SearchResult r : newResults) {
-                boolean notInList = true;
-                for (SearchResult cr : currentResearchResults) {
-                    if (r.getId().compareTo(cr.getId()) == 0 && r.getPartition() == cr.getPartition()) {
-                        notInList = false;
-                    }    
-                }
-                
-                if (notInList) {
-                    currentResearchResults.add(r);
-                }
-            }
-            logger.debug(self.getId()+" : currently "+currentResearchResults.size()+" results");
-        }
-    };
-    
-    Handler<EntryRequest.Timeout> handleEntryTimeout = new Handler<EntryRequest.Timeout>() {
-        @Override
-        public void handle(Timeout e) {
-            logger.debug(self.getId()+" : research timeout ["+currentResearchResults.size()+" results]");
-            Collections.sort(currentResearchResults, new SearchResult.ComparatorByScore());
-            
-            if (currentResearchResults.size() > 10) {
-                currentResearchResults = currentResearchResults.subList(0, 10);
-            }
-            
-            trigger (new WebResponse(searchPageHtml(currentResearchResults), currentRequest, 1, 1), webPort);
-            
-            currentRequest = null;
-            currentResearchResults.clear();
-        }
-    };
+
     
 //-------------------------------------------------------------------------------------------------------------------------------------
 //                                              Periodic index exchanges
@@ -426,15 +318,6 @@ public final class Search extends ComponentDefinition {
         TopDocs topDocs = searcher.search(query, hitsPerPage, new Sort(new SortField("id", Type.INT)));
         return topDocs.scoreDocs;
     }
-    
-    // Returns true if this peer already has entry n° id
-    boolean isAlreadyKnown(int id) throws IOException {
-        IndexReader reader = DirectoryReader.open(index);
-        IndexSearcher searcher = new IndexSearcher(reader);
-
-        ScoreDoc[] hits = getExistingDocsInRange(id, id, reader, searcher);
-        return hits != null && hits.length > 0;
-    }
         
     List<Range> getMissingRanges() {
         List<Range> res = new ArrayList<Range>();
@@ -472,11 +355,15 @@ public final class Search extends ComponentDefinition {
                     java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
                 }
             }
-
         }
 
-
         return res;
+    }
+    
+    private int idOfScoreDoc(ScoreDoc hit, IndexSearcher searcher) throws IOException {
+        int docId = hit.doc;
+        Document d = searcher.doc(docId);
+        return Integer.parseInt(d.get("id"));
     }
 
     List<IndexEntry> getMissingIndexEntries(Range range) {
@@ -517,12 +404,6 @@ public final class Search extends ComponentDefinition {
         return res;
     }
 
-    /**
-     * Called by null null     {@link #handleMissingIndexEntriesRequest(MissingIndexEntries.Request) 
-     * handleMissingIndexEntriesRequest}
-     *
-     * @return List of IndexEntries at this node great than max
-     */
     List<IndexEntry> getEntriesGreaterThan(int max) {
         List<IndexEntry> res = new ArrayList<IndexEntry>();
 
@@ -593,67 +474,10 @@ public final class Search extends ComponentDefinition {
         }
     };
     
-    Handler<CyclonSample> handleCyclonSample = new Handler<CyclonSample>() {
-        @Override
-        public void handle(CyclonSample event) {
-            // receive a new list of neighbours
-            neighbours.clear();
-            neighbours.addAll(event.getSample());
-
-            // update routing tables
-            for (Address p : neighbours) {
-                int partition = p.getId() % searchConfiguration.getNumPartitions();
-                List<PeerDescriptor> nodes = routingTable.get(partition);
-
-                TMan.merge(nodes, new PeerDescriptor(p));
-                
-                // keep the freshest descriptors in this partition
-                Collections.sort(nodes, peerAgeComparator);
-                while(nodes.size() > searchConfiguration.getMaxNumRoutingEntries())
-                    nodes.remove(searchConfiguration.getMaxNumRoutingEntries());
-            }
-        }
-    };
-    
-    //-------------------------------------------------------------------	
-    Handler<AddIndexText> handleAddIndexText = new Handler<AddIndexText>() {
-        @Override
-        public void handle(AddIndexText event) {
-            addingEntryQueue.add(event.getText());
-            trigger(new LeaderRequest(), leaderElectionPort);
-            logger.debug(self.getId()+" : requested leader for entry "+event.getText());
-        }
-    };
-    
     
 
-    private void updateIndexPointers(int id) {
-        if (id == lastMissingIndexEntry) {
-            lastMissingIndexEntry++;
-        }
-        if (id > maxIndexEntry) {
-            maxIndexEntry = id;
-        }
-    }
     
-    private int idOfScoreDoc(ScoreDoc hit, IndexSearcher searcher) throws IOException {
-        int docId = hit.doc;
-        Document d = searcher.doc(docId);
-        return Integer.parseInt(d.get("id"));
-    }
-    
-    
-//-------------------------------------------------------------------------------------------------------------------------------------
-//                                              TMan samples
-//-------------------------------------------------------------------------------------------------------------------------------------
-    Handler<TManSample> handleTManSample = new Handler<TManSample>() {
-        @Override
-        public void handle(TManSample event) {
-            // Retrieve sample, and forward it to LeaderElection component as well
-            tmanSample = event.getSample();
-            trigger(event, leaderElectionPort);
-        }
-    };
+
     
 //-------------------------------------------------------------------------------------------------------------------------------------
 //                                              Election and abdication management
@@ -678,7 +502,7 @@ public final class Search extends ComponentDefinition {
                 trigger(new MaxIdRequest.Request(self, e.getOldLeader()), networkPort);
             }
             
-            ScheduleTimeout st = new ScheduleTimeout(10000);
+            ScheduleTimeout st = new ScheduleTimeout(searchConfiguration.getLeaderWarmUpTime());
             st.setTimeoutEvent(new MaxIdRequest.Timeout(st));
             trigger(st, timerPort);
         }
@@ -706,6 +530,20 @@ public final class Search extends ComponentDefinition {
         }
     };
     
+    
+//-------------------------------------------------------------------------------------------------------------------------------------
+//                                              Add entry
+//-------------------------------------------------------------------------------------------------------------------------------------
+    Handler<AddIndexText> handleAddIndexText = new Handler<AddIndexText>() {
+        @Override
+        public void handle(AddIndexText event) {
+            addingEntryQueue.add(event.getText());
+            trigger(new LeaderRequest(), leaderElectionPort);
+            logger.debug(self.getId()+" : requested leader for entry "+event.getText());
+        }
+    };
+    
+    
 //-------------------------------------------------------------------------------------------------------------------------------------
 //                                              Finding the current leader
 //-------------------------------------------------------------------------------------------------------------------------------------
@@ -728,7 +566,7 @@ public final class Search extends ComponentDefinition {
                 ScheduleTimeout st = new ScheduleTimeout(searchConfiguration.getIdRequestTimeout());
                 st.setTimeoutEvent(new IdRequest.Timeout(st));
                 
-                currentRequests.put(st.getTimeoutEvent().getTimeoutId(), entry);
+                currentAddRequests.put(st.getTimeoutEvent().getTimeoutId(), entry);
                 trigger(st, timerPort);
             }
         }
@@ -770,14 +608,14 @@ public final class Search extends ComponentDefinition {
             
             logger.debug(self.getId() + " : received id response [" + idEntry + ", " + entry + "]");
             
-            UUID timeout = getTimeoutIDFromValue(currentRequests, entry);
+            UUID timeout = getTimeoutIDFromValue(currentAddRequests, entry);
             if (timeout == null)
             {
                 logger.error(self.getId() + " : Invalid entry: " + entry);
                 return;
             }
             
-            currentRequests.remove(timeout);
+            currentAddRequests.remove(timeout);
             
             trigger(new CancelTimeout(timeout), timerPort);
 
@@ -794,7 +632,7 @@ public final class Search extends ComponentDefinition {
     Handler<IdRequest.Timeout> handleIdRequestTimeout = new Handler<IdRequest.Timeout>() {
         @Override
         public void handle(IdRequest.Timeout e) {
-            String entry = currentRequests.remove(e.getTimeoutId());
+            String entry = currentAddRequests.remove(e.getTimeoutId());
             
             addingEntryQueue.add(entry);
             trigger(new LeaderRequest(), leaderElectionPort);
@@ -809,5 +647,186 @@ public final class Search extends ComponentDefinition {
         }
 
         return null;
+    }
+    
+//-------------------------------------------------------------------------------------------------------------------------------------
+//                                              Search
+//-------------------------------------------------------------------------------------------------------------------------------------
+    // Ask nodes from the routing table to do a local search on queryStr
+    void requestEntries(String queryString) {
+        currentResearchResults.clear();
+        logger.debug(self.getId() + " : request entry ["+queryString+"] ; I known "+routingTable.keySet().size()+" partitions.");
+        for (List<PeerDescriptor> nodeList : routingTable.values()) {
+            List<PeerDescriptor> shortList = nodeList;
+            
+            if (shortList.size() > 3) {
+                shortList = shortList.subList(0, 3);
+            }
+            for (PeerDescriptor p : shortList) {
+                trigger (new EntryRequest.Request(self, p.getAddress(), queryString), networkPort);
+            }
+        }
+        
+        ScheduleTimeout st = new ScheduleTimeout(searchConfiguration.getLookupTimeout());
+        st.setTimeoutEvent(new EntryRequest.Timeout(st));
+        trigger(st, timerPort);
+    }
+    
+    Handler<EntryRequest.Request> handleEntryRequest = new Handler<EntryRequest.Request>() {
+        @Override
+        public void handle(Request e) {
+            int myPartition = self.getId() % searchConfiguration.getNumPartitions();
+            logger.debug(self.getId() + " : [partition "+myPartition+"] received request for query "+e.getQuery());
+            
+            try {
+                List<SearchResult> localResult = localSearch(e.getQuery(), 10);
+                trigger (new EntryRequest.Response(self, e.getSource(), localResult), networkPort);
+            } catch (IOException ex) {
+                java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
+            } catch (ParseException ex) {
+                java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+    };
+    
+    // Do a local Lucene search on queryStr
+    List<SearchResult> localSearch(String queryStr, int maxHits) throws IOException, ParseException {
+        // the "title" arg specifies the default field to use when no field is explicitly specified in the query.
+        Query q = new QueryParser(Version.LUCENE_42, "title", analyzer).parse(queryStr);
+        IndexSearcher searcher = null;
+        IndexReader reader = null;
+        try {
+            reader = DirectoryReader.open(index);
+            searcher = new IndexSearcher(reader);
+        } catch (IOException ex) {
+            java.util.logging.Logger.getLogger(Search.class.getName()).log(Level.SEVERE, null, ex);
+            System.exit(-1);
+        }
+
+        TopScoreDocCollector collector = TopScoreDocCollector.create(maxHits, true);
+        searcher.search(q, collector);
+        ScoreDoc[] hits = collector.topDocs().scoreDocs;
+        
+        int myPartition = self.getId() % searchConfiguration.getNumPartitions();
+        List<SearchResult> result = new ArrayList<SearchResult>();
+        for (int i = 0; i < hits.length; ++i) {
+            int docId = hits[i].doc;
+            result.add(new SearchResult(myPartition, searcher.doc(docId), hits[i].score));
+        }
+        
+        reader.close();
+        
+        return result;
+    }
+    
+    Handler<EntryRequest.Response> handleEntryResponse = new Handler<EntryRequest.Response>() {
+        @Override
+        public void handle(Response e) {
+            List<SearchResult> newResults = e.getHits();
+            logger.debug(self.getId()+" : merging " + newResults.size()+" results");
+                
+            // Merge old and new results.
+            // Results are considered equal if they have the same id and partition number.
+            for(SearchResult r : newResults) {
+                boolean notInList = true;
+                for (SearchResult cr : currentResearchResults) {
+                    if (r.getId().compareTo(cr.getId()) == 0 && r.getPartition() == cr.getPartition()) {
+                        notInList = false;
+                    }    
+                }
+                
+                if (notInList) {
+                    currentResearchResults.add(r);
+                }
+            }
+            logger.debug(self.getId()+" : currently "+currentResearchResults.size()+" results");
+        }
+    };
+    
+    Handler<EntryRequest.Timeout> handleEntryTimeout = new Handler<EntryRequest.Timeout>() {
+        @Override
+        public void handle(Timeout e) {
+            logger.debug(self.getId()+" : research timeout ["+currentResearchResults.size()+" results]");
+            Collections.sort(currentResearchResults, new SearchResult.ComparatorByScore());
+            
+            if (currentResearchResults.size() > 10) {
+                currentResearchResults = currentResearchResults.subList(0, 10);
+            }
+            
+            trigger (new WebResponse(searchPageHtml(currentResearchResults), currentSearchRequest, 1, 1), webPort);
+            
+            currentSearchRequest = null;
+            currentResearchResults.clear();
+        }
+    };
+    
+    
+//-------------------------------------------------------------------------------------------------------------------------------------
+//                                              Web interface
+//-------------------------------------------------------------------------------------------------------------------------------------
+    Handler<WebRequest> handleWebRequest = new Handler<WebRequest>() {
+        @Override
+        public void handle(WebRequest event) {
+
+            String[] args = event.getTarget().split("-");
+
+            logger.debug("Handling Webpage Request");
+            logger.debug(event.getRequest().toString());
+            WebResponse response;
+            if (args[0].compareToIgnoreCase("search") == 0) {
+                currentSearchRequest = event;
+                requestEntries(args[1]);
+            } else if (args[0].compareToIgnoreCase("add") == 0) {
+                handleAddIndexText.handle(new AddIndexText(args[1]));
+                response = new WebResponse(addEntryHtml(args[1]), event, 1, 1);
+                trigger(response, webPort);
+            } else {
+                currentSearchRequest = event;
+                requestEntries(event.getTarget());
+            }
+            
+        }
+    };
+
+    // Builds a search result HTML page from a list of results
+    private String searchPageHtml(List<SearchResult> results) {
+        StringBuilder sb = new StringBuilder("<!DOCTYPE html PUBLIC \"-//W3C");
+        sb.append("//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR");
+        sb.append("/xhtml1/DTD/xhtml1-transitional.dtd\"><html xmlns=\"http:");
+        sb.append("//www.w3.org/1999/xhtml\"><head><meta http-equiv=\"Conten");
+        sb.append("t-Type\" content=\"text/html; charset=utf-8\" />");
+        sb.append("<title>Kompics P2P Bootstrap Server</title>");
+        sb.append("<style type=\"text/css\"><!--.style2 {font-family: ");
+        sb.append("Arial, Helvetica, sans-serif; color: #0099FF;}--></style>");
+        sb.append("</head><body><h2 align=\"center\" class=\"style2\">");
+        sb.append("ID2210 (Decentralized Search for Piratebay)</h2><br>");
+        
+        sb.append("Found ").append(results.size()).append(" entries.<ul>");
+        int i = 1;
+        for (SearchResult d : results) {
+            sb.append("<li>").append(i).append(". ").append(d.getId()).append("\t").append(d.getTitle()).append("</li>");
+            i++;
+        }
+        sb.append("</ul>");
+
+        sb.append("</body></html>");
+        return sb.toString();
+    }
+
+    // Builds an add HTML page from a new entry.
+    private String addEntryHtml(String title) {
+        StringBuilder sb = new StringBuilder("<!DOCTYPE html PUBLIC \"-//W3C");
+        sb.append("//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR");
+        sb.append("/xhtml1/DTD/xhtml1-transitional.dtd\"><html xmlns=\"http:");
+        sb.append("//www.w3.org/1999/xhtml\"><head><meta http-equiv=\"Conten");
+        sb.append("t-Type\" content=\"text/html; charset=utf-8\" />");
+        sb.append("<title>Adding an Entry</title>");
+        sb.append("<style type=\"text/css\"><!--.style2 {font-family: ");
+        sb.append("Arial, Helvetica, sans-serif; color: #0099FF;}--></style>");
+        sb.append("</head><body><h2 align=\"center\" class=\"style2\">");
+        sb.append("ID2210 Entry ").append(title).append(" will be uploaded</h2><br>");
+        sb.append("</body></html>");
+        
+        return sb.toString();
     }
 }
