@@ -10,7 +10,7 @@ import se.sics.kompics.p2p.bootstrap.BootstrapConfiguration;
 
 public class Configuration {
 
-    public static int SNAPSHOT_PERIOD = 1000;
+    public static int SNAPSHOT_PERIOD = 5000;
     public static int AVAILABLE_TOPICS = 20;
     public InetAddress ip = null;
 
@@ -35,7 +35,7 @@ public class Configuration {
         
         int numPartition = 1;
         
-        searchConfiguration = new SearchConfiguration(2*1000, numPartition, 20, seed);
+        searchConfiguration = new SearchConfiguration(1000, numPartition, 20, seed);
         tmanConfiguration = new TManConfiguration(seed, 1000, numPartition, 0.8, 10, 10);
         cyclonConfiguration = new CyclonConfiguration(seed, 5, 10, 1000, 500000, (long) (Integer.MAX_VALUE - Integer.MIN_VALUE), 20);
 

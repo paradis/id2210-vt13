@@ -66,6 +66,7 @@ import search.system.peer.leader.LeaderResponse;
 import search.system.peer.search.EntryRequest.Request;
 import search.system.peer.search.EntryRequest.Response;
 import search.system.peer.search.EntryRequest.Timeout;
+import tman.system.peer.tman.TMan;
 import tman.system.peer.tman.TManSample;
 import tman.system.peer.tman.TManSamplePort;
 
@@ -259,6 +260,7 @@ public final class Search extends ComponentDefinition {
             updateIndexPointers(id);
             IndexWriter w = new IndexWriter(index, config);
             Document doc = new Document();
+            //TODO: value cannot be null
             doc.add(new TextField("title", title, Field.Store.YES));
             // Use a NumericRangeQuery to find missing index entries:
             // http://lucene.apache.org/core/4_2_0/core/org/apache/lucene/search/NumericRangeQuery.html
@@ -396,25 +398,29 @@ public final class Search extends ComponentDefinition {
          
             List<Address> neigh = new ArrayList<Address>();
             Iterator<PeerDescriptor> it = routingTable.get(myPartition).iterator();
-            //TODO : parametrize /2
-            while (it.hasNext() && neigh.size() < tmanSample.size() / 2)
+            //TODO : parametrize ratio tman / neighbors
+            while (it.hasNext() && neigh.size() < tmanSample.size() * 0.75)
                 neigh.add(it.next().getAddress());
             
             allNeighbours.addAll(neigh);
             
             if (allNeighbours.isEmpty())
                 return;
-            
-            Address dest = allNeighbours.get(random.nextInt(allNeighbours.size()));
 
             // find all missing index entries (ranges) between lastMissingIndexValue
             // and the maxIndexValue
             List<Range> missingIndexEntries = getMissingRanges();
 
-            // Send a MissingIndexEntries.Request for the missing index entries to dest
-            MissingIndexEntries.Request req = new MissingIndexEntries.Request(self, dest,
-                    missingIndexEntries);
-            trigger(req, networkPort);
+            // Concurrent requests
+            //TODO parametrize number
+            for (int i=0; !allNeighbours.isEmpty() && i<2; i++)
+            {
+                Address dest = allNeighbours.get(random.nextInt(allNeighbours.size()));
+                allNeighbours.remove(dest);
+                // Send a MissingIndexEntries.Request for the missing index entries to dest
+                MissingIndexEntries.Request req = new MissingIndexEntries.Request(self, dest, missingIndexEntries);
+                trigger(req, networkPort);
+            }
         }
     };
 
@@ -610,15 +616,12 @@ public final class Search extends ComponentDefinition {
                 int partition = p.getId() % searchConfiguration.getNumPartitions();
                 List<PeerDescriptor> nodes = routingTable.get(partition);
 
-                // Note - this might replace an existing entry in Lucene
-                nodes.add(new PeerDescriptor(p));
+                TMan.merge(nodes, new PeerDescriptor(p));
+                
                 // keep the freshest descriptors in this partition
                 Collections.sort(nodes, peerAgeComparator);
-                List<PeerDescriptor> nodesToRemove = new ArrayList<PeerDescriptor>();
-                for (int i = nodes.size(); i > searchConfiguration.getMaxNumRoutingEntries(); i--) {
-                    nodesToRemove.add(nodes.get(i - 1));
-                }
-                nodes.removeAll(nodesToRemove);
+                while(nodes.size() > searchConfiguration.getMaxNumRoutingEntries())
+                    nodes.remove(searchConfiguration.getMaxNumRoutingEntries());
             }
         }
     };

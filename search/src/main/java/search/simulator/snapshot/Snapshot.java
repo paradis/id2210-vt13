@@ -74,6 +74,7 @@ public class Snapshot {
         String str = "---\n";
         int maxNumIndexEntries = 0;
         int minNumIndexEntries = Integer.MAX_VALUE;
+        double aveNumIndexEntries = 0;
         for (PeerInfo p : peers.values()) {
             if (p.getNumIndexEntries() < minNumIndexEntries) {
                 minNumIndexEntries = p.getNumIndexEntries();
@@ -81,9 +82,12 @@ public class Snapshot {
             if (p.getNumIndexEntries() > maxNumIndexEntries) {
                 maxNumIndexEntries = p.getNumIndexEntries();
             }
+            aveNumIndexEntries += p.getNumIndexEntries();
         }
+        aveNumIndexEntries /= peers.size();
         str += "Peer with max num of index entries: " + maxNumIndexEntries + "\n";
         str += "Peer with min num of index entries: " + minNumIndexEntries + "\n";
+        str += "Average num of index entries: " + aveNumIndexEntries + "\n";
 
         return str;
     }
