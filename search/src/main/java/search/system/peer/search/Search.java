@@ -235,6 +235,10 @@ public final class Search extends ComponentDefinition {
 //                                              Add entry to Lucene doc
 //-------------------------------------------------------------------------------------------------------------------------------------
     private void addEntry(String title, int id) throws IOException {
+        // For some reason, Scenario sometimes sends an empty entry... Don't add it.
+        if (title == null)
+            return;
+        
         if (!isAlreadyKnown(id)) {
             updateIndexPointers(id);
             IndexWriter w = new IndexWriter(index, config);
