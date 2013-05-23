@@ -163,7 +163,7 @@ public final class Search extends ComponentDefinition {
             }
             
             random = new Random(init.getConfiguration().getSeed());
-            long period = searchConfiguration.getPeriod();
+            int period = searchConfiguration.getUpdatePeriod();
             SchedulePeriodicTimeout rst = new SchedulePeriodicTimeout(period, period);
             rst.setTimeoutEvent(new UpdateIndexTimeout(rst));
             trigger(rst, timerPort);
@@ -175,7 +175,6 @@ public final class Search extends ComponentDefinition {
                 writer.commit();
                 writer.close();
             } catch (IOException e) {
-                // TODO Auto-generated catch block
                 e.printStackTrace();
             }
 
@@ -316,7 +315,7 @@ public final class Search extends ComponentDefinition {
             }
         }
         
-        ScheduleTimeout st = new ScheduleTimeout(2000);
+        ScheduleTimeout st = new ScheduleTimeout(searchConfiguration.getLookupTimeout());
         st.setTimeoutEvent(new EntryRequest.Timeout(st));
         trigger(st, timerPort);
     }
@@ -395,8 +394,8 @@ public final class Search extends ComponentDefinition {
          
             List<Address> neigh = new ArrayList<Address>();
             Iterator<PeerDescriptor> it = routingTable.get(myPartition).iterator();
-            //TODO : parametrize ratio tman / neighbors
-            while (it.hasNext() && neigh.size() < tmanSample.size() * 0.75)
+            
+            while (it.hasNext() && neigh.size() < tmanSample.size() * searchConfiguration.getRatioNeighborsTMan())
                 neigh.add(it.next().getAddress());
             
             allNeighbours.addAll(neigh);
@@ -408,16 +407,10 @@ public final class Search extends ComponentDefinition {
             // and the maxIndexValue
             List<Range> missingIndexEntries = getMissingRanges();
 
-            // Concurrent requests
-            //TODO parametrize number
-            for (int i=0; !allNeighbours.isEmpty() && i<2; i++)
-            {
-                Address dest = allNeighbours.get(random.nextInt(allNeighbours.size()));
-                allNeighbours.remove(dest);
-                // Send a MissingIndexEntries.Request for the missing index entries to dest
-                MissingIndexEntries.Request req = new MissingIndexEntries.Request(self, dest, missingIndexEntries);
-                trigger(req, networkPort);
-            }
+            Address dest = allNeighbours.get(random.nextInt(allNeighbours.size()));
+            // Send a MissingIndexEntries.Request for the missing index entries to dest
+            MissingIndexEntries.Request req = new MissingIndexEntries.Request(self, dest, missingIndexEntries);
+            trigger(req, networkPort);
         }
     };
 
@@ -589,7 +582,6 @@ public final class Search extends ComponentDefinition {
             }
             
             for(IndexEntry e : event.getEntries()) {
-                // TODO : plus joli que ça
                 try {
                     logger.debug ("Merging entry " + e.getIndexId());
                     addEntry(e.getText(), e.getIndexId());
@@ -732,8 +724,7 @@ public final class Search extends ComponentDefinition {
                 trigger(new IdRequest.Request(self, e.getLeader(), entry), networkPort);
                 logger.debug(self.getId()+" requested id for entry " + entry);
                 
-                // TODO : correct period
-                ScheduleTimeout st = new ScheduleTimeout(2000);
+                ScheduleTimeout st = new ScheduleTimeout(searchConfiguration.getIdRequestTimeout());
                 st.setTimeoutEvent(new IdRequest.Timeout(st));
                 
                 currentRequests.put(st.getTimeoutEvent().getTimeoutId(), entry);

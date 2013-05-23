@@ -35,8 +35,20 @@ public class Configuration {
         
         int numPartition = 1;
         
-        searchConfiguration = new SearchConfiguration(1000, numPartition, 20, seed);
-        tmanConfiguration = new TManConfiguration(seed, 1000, numPartition, 0.8, 10, 10);
+        searchConfiguration = new SearchConfiguration(1000, // The period between each request for new entries
+                                                      1000, // The Timeout before returning the results of a user web research
+                                                      2000, // Timeout before retrying when we have not receive a id from the leader when adding a new entry
+                                                      5000, // Time for the leader to receive a MaxIdRequest or collect entries when the previous leader is down
+                                                      numPartition,
+                                                      20,   // nodes per partition in routing table
+                                                      0.75, // The ratio between Neighbors and Tman when selecting the peer we will use to search for new entries
+                                                      seed);
+        tmanConfiguration = new TManConfiguration(seed,
+                                                  1000, //peridod
+                                                  numPartition,
+                                                  0.8, // temperature
+                                                  10,  // sampleSize
+                                                  10); // maxAge
         cyclonConfiguration = new CyclonConfiguration(seed, 5, 10, 1000, 500000, (long) (Integer.MAX_VALUE - Integer.MIN_VALUE), 20);
 
         String c = File.createTempFile("bootstrap.", ".conf").getAbsolutePath();
